@@ -10,15 +10,6 @@
 # LOAD LIBRARIES    #######
 # ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-# install.packages("tidyverse")
-# install.packages("xlsx")
-# install.packages("expss")
-# install.packages("janitor")
-# install.packages("DataExplorer")
-# install.packages("SmartEDA")
-# install.packages("dlookr")
-# install.packages("here")
-
 # Core set of libraries for data manipulation
 library(tidyverse) # Data wrangling and transformation
 library(expss)     # Manage and preserve variable labels
@@ -161,24 +152,21 @@ dat_clean <- dat_clean %>%
 ## Remove Empty Columns ####
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-empty_cols <- names(dat_clean)[
-  sapply(dat_clean, function(x) all(is.na(x) | x == ""))
-]
-
- constant_cols <- names(dat_clean)[
-  sapply(dat_clean, function(x) length(unique(na.omit(x))) <= 1)
-]
- 
-constant_cols
-
-unique(dat_clean$otherstudy_checkbox_adm_6); unique(dat_clean$admitabx_adm_11)
-unique(dat_clean$hivquestions_adm_4); unique(dat_clean$respinterv_dis_3)
-
-# dat_clean <- remove_empty(dat_clean, which=c("rows", "cols"), quiet = FALSE)
- # dat_clean <- remove_constant(dat_clean, na.rm = FALSE)
-
-dat_clean <- dat_clean %>% 
-  select(-all_of(c(empty_cols, constant_cols)))
+# empty_cols <- names(dat_clean)[
+#   sapply(dat_clean, function(x) all(is.na(x) | x == ""))
+# ]
+# 
+#  constant_cols <- names(dat_clean)[
+#   sapply(dat_clean, function(x) length(unique(na.omit(x))) <= 1)
+# ]
+#  
+# constant_cols
+# 
+# unique(dat_clean$otherstudy_checkbox_adm_6); unique(dat_clean$admitabx_adm_11)
+# unique(dat_clean$hivquestions_adm_4); unique(dat_clean$respinterv_dis_3)
+# 
+# dat_clean <- dat_clean %>% 
+#   select(-all_of(c(empty_cols, constant_cols)))
 
 
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -337,6 +325,8 @@ dat_clean <- dat_clean %>%
 dat_clean <- dat_clean %>% 
   filter(redcap_event_name != "Autopsy")
 
+
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ONLY FINAL VISIT         ####
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -349,6 +339,264 @@ dat_subset <- dat_clean %>%
   ungroup()
 
 dat_clean <- dat_subset
+
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# CHILDREN DATA GLOBAL MANIPULATION ######
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+table(dat_clean$studygroup_adm)
+range(dat_clean$agecalc_adm, na.rm = TRUE)
+sum(is.na(dat_clean$agecalc_adm))
+
+
+dat_clean2 <- dat_clean %>%
+  mutate(
+    # Combine time to hospital categories
+    
+    # Combine modes of transport
+    
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # Combine DAMA reason variables    #####     
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    damareason_new_1 = case_when(
+      damareason_dama_1 == "Checked" | damareason_dis_1 == "Checked" ~ "Checked",
+      is.na(damareason_dama_1) & is.na(damareason_dis_1) ~ NA_character_,
+      TRUE ~ "Unchecked"
+    ),
+    damareason_new_1 = factor(damareason_new_1, levels = c("Unchecked", "Checked")),
+    
+    damareason_new_2 = case_when(
+      damareason_dama_2 == "Checked" | damareason_dis_2 == "Checked" ~ "Checked",
+      is.na(damareason_dama_2) & is.na(damareason_dis_2) ~ NA_character_,
+      TRUE ~ "Unchecked"
+    ),
+    damareason_new_2 = factor(damareason_new_2, levels = c("Unchecked", "Checked")),
+    
+    damareason_new_3 = case_when(
+      damareason_dama_3 == "Checked" | damareason_dis_3 == "Checked" ~ "Checked",
+      is.na(damareason_dama_3) & is.na(damareason_dis_3) ~ NA_character_,
+      TRUE ~ "Unchecked"
+    ),
+    damareason_new_3 = factor(damareason_new_3, levels = c("Unchecked", "Checked")),
+    
+    damareason_new_4 = case_when(
+      damareason_dama_4 == "Checked" | damareason_dis_4 == "Checked" ~ "Checked",
+      is.na(damareason_dama_4) & is.na(damareason_dis_4) ~ NA_character_,
+      TRUE ~ "Unchecked"
+    ),
+    damareason_new_4 = factor(damareason_new_4, levels = c("Unchecked", "Checked")),
+    
+    damareason_new_5 = case_when(
+      damareason_dama_5 == "Checked" | damareason_dis_5 == "Checked" ~ "Checked",
+      is.na(damareason_dama_5) & is.na(damareason_dis_5) ~ NA_character_,
+      TRUE ~ "Unchecked"
+    ),
+    damareason_new_5 = factor(damareason_new_5, levels = c("Unchecked", "Checked")),
+    
+    damareason_new_6 = case_when(
+      damareason_dama_6 == "Checked" | damareason_dis_6 == "Checked" ~ "Checked",
+      is.na(damareason_dama_6) & is.na(damareason_dis_6) ~ NA_character_,
+      TRUE ~ "Unchecked"
+    ),
+    damareason_new_6 = factor(damareason_new_6, levels = c("Unchecked", "Checked")),
+    
+    damareason_new_7 = case_when(
+      damareason_dama_7 == "Checked" | damareason_dis_7 == "Checked" ~ "Checked",
+      is.na(damareason_dama_7) & is.na(damareason_dis_7) ~ NA_character_,
+      TRUE ~ "Unchecked"
+    ),
+    damareason_new_7 = factor(damareason_new_7, levels = c("Unchecked", "Checked")),
+    
+    damareason_new_8 = case_when(
+      damareason_dama_8 == "Checked" | damareason_dis_8 == "Checked" ~ "Checked",
+      is.na(damareason_dama_8) & is.na(damareason_dis_8) ~ NA_character_,
+      TRUE ~ "Unchecked"
+    ),
+    damareason_new_8 = factor(damareason_new_8, levels = c("Unchecked", "Checked")),
+    
+    damareason_new_97 = case_when(
+      damareason_dama_97 == "Checked" | damareason_dis_97 == "Checked" ~ "Checked",
+      is.na(damareason_dama_97) & is.na(damareason_dis_97) ~ NA_character_,
+      TRUE ~ "Unchecked"
+    ),
+    damareason_new_97 = factor(damareason_new_97, levels = c("Unchecked", "Checked")),
+    
+    damareason_new_98 = case_when(
+      damareason_dama_98 == "Checked" | damareason_dis_98 == "Checked" ~ "Checked",
+      is.na(damareason_dama_98) & is.na(damareason_dis_98) ~ NA_character_,
+      TRUE ~ "Unchecked"
+    ),
+    damareason_new_98 = factor(damareason_new_98, levels = c("Unchecked", "Checked")),
+    
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # Prior hospitalization (Dont know -> NA) ####
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    priorhosp_adm_new = case_when(
+      as.character(priorhosp_adm) == "Dont know" ~ NA_character_,
+      TRUE ~ as.character(priorhosp_adm)
+    ),
+    priorhosp2_adm_new = case_when(
+      as.character(priorhosp2_adm) == "Dont know" ~ NA_character_,
+      TRUE ~ as.character(priorhosp2_adm)
+    ),
+    
+    # Combine
+    priorhosp_comb = case_when(
+      !is.na(priorhosp_adm_new)  ~ priorhosp_adm_new,
+      !is.na(priorhosp2_adm_new) ~ priorhosp2_adm_new,
+      TRUE ~ NA_character_
+    ),
+    
+    # Re-apply factor levels (no "Dont know")
+    priorhosp_comb = factor(
+      priorhosp_comb,
+      levels = c(
+        "< 7 days",
+        "7 days to < 1 month",
+        "1 month to < 6 months",
+        "6 months to < 1 year",
+        "1 year or more",
+        "Never"
+      )
+    ),
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # Dates, LOS, and Age Derivations        ####
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    disch_date = as.Date(dischdate_dis),
+    admit_date = as.Date(admitdate_adm),
+    dob_date   = as.Date(dob_adm),
+    
+    los_days = as.numeric(disch_date - admit_date),
+    
+    age_days = case_when(
+      !is.na(dob_date) & !is.na(admit_date) ~ as.numeric(admit_date - dob_date),
+      !is.na(agecalc_adm) ~ as.numeric(agecalc_adm) * 30.4375,
+      TRUE ~ NA_real_
+    ),
+    
+    age_months = age_days / 30.4375,
+    age_years  = floor(age_days / 365.25),
+    
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # Unplanned discharge: DAMA or Fled      ####
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    dischstatus_unplanned = factor(
+      case_when(
+        dischstatus_dis %in% c("Discharged against medical advice", "Fled/escaped") ~ "Unplanned discharge",
+        dischstatus_dis == "Routine discharge" ~ "Routine discharge",
+        dischstatus_dis == "Referred to higher level of care" ~ "Referred",
+        TRUE ~ NA_character_
+      ),
+      levels = c("Routine discharge", "Unplanned discharge", "Referred")
+    ),
+    
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # Combine SpO2 at discharge             ####
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    spo2_1 = suppressWarnings(as.numeric(as.character(spo2site1_pc_oxi_dis))),
+    spo2_2 = suppressWarnings(as.numeric(as.character(spo2site2_pc_oxi_dis))),
+    spo2_3 = suppressWarnings(as.numeric(as.character(spo2other_dis))),
+    
+    spo2_dis = case_when(
+      !is.na(spo2_1) | !is.na(spo2_2) | !is.na(spo2_3) ~ pmin(spo2_1, spo2_2, spo2_3, na.rm = TRUE),
+      TRUE ~ NA_real_
+    ),
+    
+    hypoxemia_dis = factor(
+      case_when(
+        is.na(spo2_dis) ~ NA_character_,
+        spo2_dis < 90   ~ "Checked",
+        TRUE            ~ "Unchecked"
+      ),
+      levels = c("Unchecked", "Checked")
+    ),
+    
+    hypoxia = factor(
+      case_when(
+        is.na(spo2_dis) ~ NA_character_,
+        spo2_dis < 95   ~ "Checked",
+        TRUE            ~ "Unchecked"
+      ),
+      levels = c("Unchecked", "Checked")
+    ),
+    
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # Discharge status                       ####
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    dischstatus_dis_new = factor(
+      case_when(
+        dischstatus_dis == "Routine discharge" ~ "Routine discharge",
+        dischstatus_dis == "Discharged against medical advice" ~ "DAMA",
+        dischstatus_dis == "Referred to higher level of care" ~ "Referred",
+        dischstatus_dis == "Fled/escaped" ~ "Fled",
+        TRUE ~ NA_character_
+      ),
+      levels = c("Routine discharge", "DAMA", "Referred", "Fled")
+    ),
+    
+    # HIV
+    hiv_status_new = factor(
+      case_when(
+        hivstatus_adm == "HIV positive" ~ "Yes",
+        hivstatus_adm == "HIV negative" ~ "No",
+        hivstatus_adm == "Refused Test" ~ NA_character_,
+        TRUE ~ NA_character_
+      ),
+      levels = c("No", "Yes")
+    ),
+    
+    # Axillary temperature
+    axillary_temp_cat = factor(
+      case_when(
+        is.na(temp_c_adm) ~ NA_character_,
+        temp_c_adm < 36.5 ~ "<36.5",
+        temp_c_adm >= 36.5 & temp_c_adm <= 37.5 ~ "36.5–37.5",
+        temp_c_adm > 37.5 & temp_c_adm <= 39 ~ "37.6–39",
+        temp_c_adm > 39 ~ ">39"
+      ),
+      levels = c("<36.5", "36.5–37.5", "37.6–39", ">39")
+    ),
+    
+    # Haemoglobin (fix labels/levels mismatch)
+    hb_status = factor(
+      case_when(
+        is.na(hemoglobin_gpdl_adm) ~ NA_character_,
+        hemoglobin_gpdl_adm < 7 ~ "Severe anemia (<7)",
+        hemoglobin_gpdl_adm >= 7 & hemoglobin_gpdl_adm < 11 ~ "Moderate anemia (7–<11)",
+        hemoglobin_gpdl_adm >= 11 ~ "Not anaemic (>=11)"
+      ),
+      levels = c("Not anaemic (>=11)", "Moderate anemia (7–<11)", "Severe anemia (<7)")
+    ),
+    
+    glucose_status = factor(
+      case_when(
+        is.na(glucose_mmolpl_adm) ~ NA_character_,
+        glucose_mmolpl_adm < 2.5  ~ "Hypoglycemia (<2.5)",
+        glucose_mmolpl_adm > 11   ~ "Hyperglycemia (>11)",
+        TRUE                      ~ "Normal (2.5–11)"
+      ),
+      levels = c("Normal (2.5–11)", "Hypoglycemia (<2.5)", "Hyperglycemia (>11)")
+    ),
+    
+    jaundice_adm_new = factor(
+      case_when(
+        jaundice_adm == "Yes" ~ "Yes",
+        jaundice_adm == "No" ~ "No",
+        TRUE ~ NA_character_
+      ),
+      levels = c("No", "Yes")
+    ),
+    
+    feedingstatus_dis_new = factor(
+      case_when(
+        feedingstatus_dis == "Dont know" ~ NA_character_,
+        TRUE ~ as.character(feedingstatus_dis)
+      ),
+      levels = c("Feeding well", "Feeding poorly", "Not feeding at all")
+    )
+  ) %>%
+  select(-spo2_1, -spo2_2, -spo2_3)
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
