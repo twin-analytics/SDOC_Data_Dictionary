@@ -246,6 +246,7 @@ Dont_know_97 <- c("illnessduration_pda",
                   "momhivtx_adm",
                   "diffhome_adm",
                   "food_adm",
+                  "birthdetail_adm_97",
                   "internetuse_illness_adm",
                   "damareason_dis_97",
                   "damareason_dama_97",
@@ -295,6 +296,8 @@ dont_know_4 <- c("feedingstatus_dis",
                  "swellinglocation_adm")
 
 dont_know_5 <- c("pddloc_fol",
+                 "urinepaintime_adm",
+                 "transfustimes_adm",
                  "swellingtime_adm",
                  "teaprobtime_adm")
 
