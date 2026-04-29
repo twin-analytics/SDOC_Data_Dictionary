@@ -19,6 +19,10 @@ library(dplyr)     # Data manipulation (part of tidyverse)
 library(sjlabelled)# Label handling for survey data
 library(Hmisc)     # Label management, summary stats
 library(labelled)
+library(zscorer) # WHO child growth z-scores
+library(lubridate)
+library(officer)
+library(flextable)
 
 # For Exploratory Data Analysis
 library(DataExplorer)# Automated data exploration
@@ -46,10 +50,6 @@ dat_rwanda_tz <- data %>%
 rm(data)
 
 # Quick checks
-table(dat_rwanda_tz$studygroup_adm)
-table(data$studygroup_adm[data$country_adm == "Tanzania"])
-table(dat_rwanda_tz$studygroup_adm[dat_rwanda_tz$country_adm == "Tanzania"])
-
 unique(dat_uganda$redcap_event_name)
 unique(dat_rwanda_tz$redcap_event_name)
 dim(dat_uganda)
@@ -241,39 +241,72 @@ Dont_know_97 <- c("illnessduration_pda",
                   "feedingstatus_onsolids_adm",
                   "tradhealer_adm",
                   "momedu_adm",
+                  "maternalsubstance_adm_97",
+                  "symptoms_adm_97",
                   "momhivtx_adm",
                   "diffhome_adm",
                   "food_adm",
                   "internetuse_illness_adm",
-                  "damareason_dis",
-                  "icu_dis",
-                  "resp_dis",
-                  "dialysis_dis",
-                  "steroids_dis",
-                  "transfusion_dis",
-                  "feedingstatus_dis",
-                  "concern_dis",
-                  "concernrecov_dis",
-                  "concernsick_dis",
-                  "concerncare_dis",
-                  "concernresourc_dis",
-                  "tradhealer_dis",
-                  "damareason_dama",
-                  "pddloc_fol",
+                  "damareason_dis_97",
+                  "damareason_dama_97",
+                  "comorbidity_adm_97",
                   "pddcaresource_fol",
                   "pdrehospsource1_fol",
+                  "birthresuscitation_adm_97",
                   "pdrehospsource2_fol",
                   "internetuse_fol",
                   "accidenttype_pda",
                   "jaundice_adm",
+                  "accidenttype_pda_97",
                   "priorhosp_adm",
                   "priorhosp2_adm")
+
+dont_know_3 <- c("transfusion_dis",
+                 "concern_dis",
+                 "concernsick_dis",
+                 "concerncare_dis",
+                 "concernresourc_dis",
+                 "priorweekabx_adm",
+                 "priorweekantimal_adm",
+                 "pddcaresource_fol",
+                 "pdrehospsource1_fol",
+                 "pdrehospsource2_fol",
+                 "internetuse_fol",
+                 "urinesymp_adm",
+                 "urine_adm",
+                 "icu_dis",
+                 "resp_dis",
+                 "dialysis_dis",
+                 "teareptepi_adm",
+                 "steroids_dis",
+                 "urinepain_adm",
+                 "bloodtransfuse_adm",
+                 "kidneydis_adm",
+                 "swelling_adm",
+                 "pallorcojunc_adm",
+                 "jaundice_adm",
+                 "dehydration_adm",
+                 "prioryearwheeze_adm",
+                 "diarrheaoften_adm",
+                 "tbcontact_adm",
+                 "tradhealer_dis")
+
+dont_know_4 <- c("feedingstatus_dis",
+                 "swellinglocation_adm")
+
+dont_know_5 <- c("pddloc_fol",
+                 "swellingtime_adm",
+                 "teaprobtime_adm")
+
+dont_know_7 <- c("priorhosp_adm",
+                 "priorhosp2_adm")
 
 # Define columns where 97 = Unsure
 unsure_97 <- c("oxygenavail_adm")
 
 # Combine them into one vector
-not_sure <- c(Unknown_97, Dont_know_97, unsure_97)
+not_sure <- c(Unknown_97, Dont_know_97, unsure_97, dont_know_3, dont_know_4,
+              dont_know_5, dont_know_7)
 
 # Replace 97 or text equivalents ("Dont know", "Unsure", etc.) with NA
 dat_clean <- dat_clean %>%
@@ -356,12 +389,9 @@ dat_clean <- dat_clean %>%
   fill(-all_of(followup_cols), .direction = "up") %>%
   ungroup()
 
-
 # Then apply the filter
 dat_clean <- dat_clean %>% 
   filter(redcap_event_name != "Autopsy")
-
-
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ONLY FINAL VISIT         ####
@@ -375,7 +405,6 @@ dat_subset <- dat_clean %>%
   ungroup()
 
 dat_clean <- dat_subset
-
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # CHILDREN DATA GLOBAL MANIPULATION ######
@@ -523,9 +552,13 @@ dat_clean <- dat_clean %>%
     spo2_adm = rowMeans(
       cbind(spo2site1_pc_oxi_adm,
             spo2site2_pc_oxi_adm),
-      na.rm = TRUE
-    ),
-    
+      na.rm = TRUE),
+  spo2_adm_cat = case_when(
+    spo2_adm < 90 ~ "90%",
+    spo2_adm <= 95 ~ "90%-95%",
+    spo2_adm > 95 ~ "95%"
+  ),
+  
     # MUAC 
     muac_mm_adm_new = factor(
       case_when(
@@ -546,8 +579,7 @@ dat_clean <- dat_clean %>%
     
     los_days = as.numeric(as.Date(dischdate_dis) - as.Date(admitdate_adm)),
     
-    agecalc_adm_new = floor(agecalc_adm/12)
-    
+    agecalc_adm_new = agecalc_adm/12
   )
 
 #############################################################
@@ -572,9 +604,13 @@ dischstatus_dis_new = factor(
 spo2_dis = rowMeans(
   cbind(
     spo2site1_pc_oxi_dis,
-    spo2site2_pc_oxi_dis,
-  ),
+    spo2site2_pc_oxi_dis),
   na.rm = TRUE
+),
+spo2_dis_cat = case_when(
+  spo2_dis < 90 ~ "90%",
+  spo2_dis <= 95 ~ "90%-95%",
+  spo2_dis > 95 ~ "95%"
 ),
 
 # Hypoxemia
@@ -676,12 +712,168 @@ damareason_new_98 = factor(damareason_new_98, levels = c("Unchecked", "Checked")
 
 )
 
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# OTHER DERIVED VARIABLES       #####
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Named vector of expected ages per grade
+# expected_age_ug <- c(
+#   # Pre-school
+#   "pre_primary" = 5,
+#   
+#   # Primary
+#   "P1" = 6, "P2" = 7, "P3" = 8, "P4" = 9,
+#   "P5" = 10, "P6" = 11, "P7" = 12,
+#   
+#   # Secondary
+#   "S1" = 13, "S2" = 14, "S3" = 15,
+#   "S4" = 16, "S5" = 17, "S6" = 18
+# )
+# dat_clean$expected_age_ug <- expected_age_ug[dat_clean$childedulevel_adm]
+# 
+# # Reference dates
+# # Ensure proper date formats
+# # School start date (Feb 1 of admission year)
+# dat_clean$school_start <- as.Date(paste0(year(dat_clean$admitdate_adm), "-02-01"))
+# 
+# # Educational age at school start
+# dat_clean$actual_age <- year(dat_clean$school_start) - year(dat_clean$dob_adm)
+# 
+# # Age difference
+# # Age difference: positive = enrolled early, negative = enrolled late/off track
+# dat_clean$age_diff_school_start <- dat_clean$expected_age_ug - dat_clean$actual_age
+# 
+# # Categorise
+# dat_clean$childedulevel_adm_new <- case_when(
+#   dat_clean$age_diff_school_start == 0  ~ "On track",
+#   dat_clean$age_diff_school_start >  0  ~ "Early",
+#   dat_clean$age_diff_school_start <  0  ~ "Off track",
+#   TRUE ~ NA_character_
+# )
+
+# Named vector of expected ages per grade
+expected_age_ug <- c(
+  "pre_primary" = 5,
+  "P1" = 6, "P2" = 7, "P3" = 8, "P4" = 9,
+  "P5" = 10, "P6" = 11, "P7" = 12,
+  "S1" = 13, "S2" = 14, "S3" = 15,
+  "S4" = 16, "S5" = 17, "S6" = 18
+)
+
+# Expected age based on grade
+dat_clean$expected_age_ug <- expected_age_ug[dat_clean$childedulevel_adm]
+
+# School start date (Feb 1 of admission year)
+dat_clean$school_start <- as.Date(paste0(year(dat_clean$admitdate_adm), "-02-01"))
+
+# Actual age at school start (in years)
+dat_clean$actual_age_at_school_start <- year(dat_clean$school_start) - year(dat_clean$dob_adm)
+
+# Age difference: positive = enrolled early, negative = enrolled late/off track
+dat_clean$age_diff_school_start <- dat_clean$expected_age_ug - dat_clean$actual_age_at_school_start
+
+# Categorise
+dat_clean$childedulevel_adm_new <- case_when(
+  dat_clean$age_diff_school_start == 0 ~ "On track",
+  dat_clean$age_diff_school_start >  0 ~ "Early",
+  dat_clean$age_diff_school_start <  0 ~ "Off track",
+  TRUE ~ NA_character_
+)
+
+table(dat_clean$childedulevel_adm_new)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~
+# Anthropometry Derived #####
+# ~~~~~~~~~~~~~~~~~~~~~
+
+# Recode sex to numeric (1 = male, 2 = female)
+dat_clean$sex_adm_new <- ifelse(dat_clean$sex_adm == "Male", 1,
+                                ifelse(dat_clean$sex_adm == "Female", 2, NA))
+table(dat_clean$sex_adm_new)
+
+# Convert MUAC to cm 
+dat_clean$muac_cm <- dat_clean$muac_mm_adm / 10
+
+# Convert age to days FIRST
+dat_clean$agecalc_days <- dat_clean$agecalc_adm * (365.25 / 12)
+
+dat_clean <- addWGSR(
+  data       = dat_clean,
+  sex        = "sex_adm_new",
+  firstPart  = "weight_kg_adm",
+  secondPart = "agecalc_days",
+  index      = "wfa",
+  output     = "weight_for_age"
+)
+
+dat_clean <- addWGSR(
+  data       = dat_clean,
+  sex        = "sex_adm_new",
+  firstPart  = "height_cm_adm",
+  secondPart = "agecalc_days",
+  index      = "hfa",
+  output     = "height_for_age"
+)
+
+dat_clean <- addWGSR(
+  data       = dat_clean,
+  sex        = "sex_adm_new",
+  firstPart  = "weight_kg_adm",
+  secondPart = "height_cm_adm",
+  thirdPart = "agecalc_adm",
+  index      = "bfa",
+  output     = "bmi_for_age"
+)
+
+# Verify they are now numeric vectors
+class(dat_clean$weight_for_age)
+class(dat_clean$height_for_age)
+class(dat_clean$bmi_for_age)
+summary(dat_clean$agecalc_adm)
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Z-score classifications                              #######
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Weight-for-age Z score
+dat_clean$weight_for_age_cat <- case_when(
+  dat_clean$weight_for_age < -3              ~ "<-3",
+  dat_clean$weight_for_age >= -3 &
+    dat_clean$weight_for_age < -2            ~ "-3 to -2",
+  dat_clean$weight_for_age >= -2             ~ ">-2",
+  TRUE                             ~ NA_character_
+)
+
+# Length/Height-for-age Z score
+dat_clean$height_for_age_cat <- case_when(
+  dat_clean$height_for_age < -3              ~ "<-3",
+  dat_clean$height_for_age >= -3 &
+    dat_clean$height_for_age < -2            ~ "-3 to -2",
+  dat_clean$height_for_age >= -2             ~ ">-2",
+  TRUE                             ~ NA_character_
+)
+
+# BMI Z score
+dat_clean$bmi_for_age_cat <- case_when(
+  dat_clean$bmi_for_age < -3              ~ "<-3",
+  dat_clean$bmi_for_age >= -3 &
+    dat_clean$bmi_for_age < -2            ~ "-3 to -2",
+  dat_clean$bmi_for_age >= -2             ~ ">-2",
+  TRUE                             ~ NA_character_
+)
+
+# Quick check
+table(dat_clean$height_for_age_cat,  useNA = "always")
+table(dat_clean$height_for_age_cat,  useNA = "always")
+table(dat_clean$bmi_for_age_cat,  useNA = "always")
+summary(dat_clean[, c("bmi_for_age","weight_for_age","height_for_age")])
+
 summary(dat_clean$spo2site1_pc_oxi_dis)
 summary(dat_clean$spo2site2_pc_oxi_dis)
 summary(dat_clean$spo2other_dis)
 summary(dat_clean$spo2_adm)
 summary(dat_clean$spo2_dis)
-
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # SAVE WORKSPACE             ########
@@ -691,5 +883,4 @@ summary(dat_clean$spo2_dis)
 to_keep <- c("dat_uganda", "dat_rwanda_tz", "dat_raw", "dat_subset", "dat_clean", "redcap_date")
 rm(list = setdiff(ls(), to_keep))
 
-save.image(paste0("Workspace/03_Create_Cleaned_Data (", redcap_date, ").RData"))
-
+save.image(paste0("Workspace/Create_Cleaned_Data (", redcap_date, ").RData"))
