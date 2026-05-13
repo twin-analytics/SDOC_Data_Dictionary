@@ -13,7 +13,6 @@ library(summarytools)
 library(broom)
 library(openxlsx)
 
-
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ELIGIBILITY CRITERIA      #########
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -65,7 +64,14 @@ dat_clean$site_adm <- droplevels(dat_clean$site_adm)
 unique(dat_clean$site_adm)
 n_distinct(dat_clean$studyid_adm)
 
-# Check other exclusion: n = 3069
+# Consent form obtained: n = 3069
+table(dat_clean$consentobtained_adm)
+consent_exclude <- subset(dat_clean, consentobtained_adm == "No")
+dat_clean <- subset(dat_clean, consentobtained_adm == "Yes"|is.na(consentobtained_adm))
+n_distinct(dat_clean$studyid_adm)
+dim(dat_clean)
+
+# Check other exclusion: n = 2822
 table(dat_clean$exclusionother_adm)
 other_exclusion <- table(dat_clean %>% 
   group_by(studyid_adm) %>% 
@@ -74,13 +80,67 @@ other_exclusion <- table(dat_clean %>%
 dat_clean <- subset(dat_clean, exclusionother_adm == "None apply"|is.na(exclusionother_adm))
 n_distinct(dat_clean$studyid_adm)
 
-# Consent form obtained: n = 2822
-table(dat_clean$consentobtained_adm)
-consent_exclude <- subset(dat_clean, consentobtained_adm == "No")
-dat_clean <- subset(dat_clean, consentobtained_adm == "Yes"|is.na(consentobtained_adm))
-n_distinct(dat_clean$studyid_adm)
-dim(dat_clean)
 
 
+# ~~~~~~~~~~~~~~~~~~~
+# Quick Checks   ####
+# ~~~~~~~~~~~~~~~~~~~
+
+# missing_summary <- dat_clean %>%
+#   summarise(across(everything(), ~ sum(is.na(.)))) %>%
+#   pivot_longer(cols = everything(),
+#                names_to = "variable",
+#                values_to = "n_missing") %>%
+#   mutate(
+#     n_total = nrow(dat_clean),
+#     pct_missing = 100 * n_missing / n_total
+#   ) %>%
+#   arrange(desc(pct_missing))
+# 
+# head(missing_summary, 20)
+# 
+# print(missing_summary, n=Inf)
+# 
+# 
+# site_ids <- dat_clean %>%
+#   filter(is.na(site_adm))
+# nrow(site_ids)
+# 
+# missing_consent <- dat_clean %>% 
+#   filter(is.na(consenttype_adm)) %>% 
+#   select(studyid_adm, site_adm)
+# missing_consent
+# 
+# missing_consentobtained <- dat_clean %>% 
+#   filter(is.na(consentobtained_adm)) %>% 
+#   select(studyid_adm, site_adm)
+# missing_consentobtained
+# 
+# View(dat_clean %>% 
+#        filter(studyid_adm %in% c("0002-2E-CH-004", "0002-9L-PH-071")))
+# 
+# missing_sex <- dat_clean %>% 
+#   filter(is.na(sex_adm)) %>% 
+#   select(studyid_adm, site_adm)
+# missing_sex
+# 
+# missing_referral <- dat_clean %>% 
+#   filter(is.na(isreferral_adm)) %>% 
+#   select(studyid_adm, site_adm)
+# missing_referral
+# 
+# missing_momalive <- dat_clean %>% 
+#   filter(is.na(momalive_adm)) %>% 
+#   select(studyid_adm, site_adm)
+# missing_momalive
+# label(dat_clean$momalive_adm)
+# 
+# missing_momage <- dat_clean %>% 
+#   filter(is.na(momage_adm)) %>% 
+#   select(studyid_adm, site_adm)
+# missing_momage
+# 
+# # Check labels
+# label(dat_clean$exclbreastfed_adm)
 
 

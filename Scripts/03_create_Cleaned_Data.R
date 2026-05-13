@@ -36,55 +36,50 @@ library(dlookr)      # Data diagnosis and visualization
 # Rename the loaded data and remove the original 'data' object.
 # This is done to prevent potential overwriting when loading the next dataset.
 
-redcap_date <- "2025-10-27"
+redcap_date <- "2026-05-06"
 
-source("Scripts/01_Redcap_Labels.r")
-dat_uganda <- data
-rm(data)   
-  
-source("Scripts/02_RedCap_Labels.R")
-dat_rwanda_tz <- data %>% 
+dat_UG <- local({
+  source("Scripts/01_Redcap_Labelsv0.02.R", local = TRUE)
+ data
+})
+
+dat_RT <- local({
+  source("Scripts/02_RedCap_Labelsv0.02.R", local = TRUE)
+data}) %>% 
   filter(country_adm != "uganda")
-# dat_rwanda_tz <- subset(dat_rwanda_tz,
-#  !(country_adm == "Tanzania" & studygroup_adm %in% c("< 6 months", "6 months to < 5 years")))
-rm(data)
 
 # Quick checks
-unique(dat_uganda$redcap_event_name)
-unique(dat_rwanda_tz$redcap_event_name)
-dim(dat_uganda)
-dim(dat_rwanda_tz)
-glimpse(dat_uganda)
-glimpse(dat_rwanda_tz)
+unique(dat_UG$redcap_event_name)
+unique(dat_RT$redcap_event_name)
+dim(dat_UG)
+dim(dat_RT)
 
 # Identify variables that differ between datasets
-setdiff(colnames(dat_uganda), colnames(dat_rwanda_tz))
-setdiff(colnames(dat_rwanda_tz)[!grepl("\\.factor$", colnames(dat_rwanda_tz))], colnames(dat_uganda))
+setdiff(colnames(dat_UG), colnames(dat_RT))
+setdiff(colnames(dat_RT)[!grepl("\\.factor$", colnames(dat_RT))], colnames(dat_UG))
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # HANDLE LABELLED VARIABLES BEFORE MERGING #####
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # Count labelled variables
-sum(sapply(dat_uganda, is.labelled))
-sum(sapply(dat_rwanda_tz, is.labelled))
+sum(sapply(dat_UG, is.labelled))
+sum(sapply(dat_RT, is.labelled))
 
 # Save variable labels before merging
-label_vars_uganda <- get_label(dat_uganda)
-label_vars_rwanda <- get_label(dat_rwanda_tz)
+label_vars_uganda <- get_label(dat_UG)
+label_vars_rwanda <- get_label(dat_RT)
 
 # Temporarily remove labels (to avoid bind_rows() errors)
-dat_uganda_clean <- remove_all_labels(dat_uganda)
-dat_rwanda_clean <- remove_all_labels(dat_rwanda_tz)
+dat_UG_clean <- remove_all_labels(dat_UG)
+dat_rwanda_clean <- remove_all_labels(dat_RT)
 
 # Merge datasets safely
-dat_raw <- bind_rows(dat_uganda_clean, dat_rwanda_clean)
+dat_raw <- bind_rows(dat_UG_clean, dat_rwanda_clean)
 
 # Reapply labels
 label(dat_raw) <- as.list(c(label_vars_uganda, label_vars_rwanda))[names(dat_raw)]
 
-str(dat_raw)
-glimpse(dat_raw)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # GLOBAL DATA MANIPULATIONS  ####
@@ -264,6 +259,7 @@ Dont_know_97 <- c("illnessduration_pda",
 
 dont_know_3 <- c("transfusion_dis",
                  "concern_dis",
+                 "concernrecov_dis",
                  "concernsick_dis",
                  "concerncare_dis",
                  "concernresourc_dis",
@@ -458,13 +454,14 @@ dat_clean <- dat_clean %>%
     # TRAVEL METHOD
     #############################################################
     
-    travelmethodother_adm_new = case_when(
+    travelmethodother_adm_new = factor(
+      case_when(
       as.character(travelmethodother_adm) %in% c("biycle","bicycle") ~ "bicycle",
       as.character(travelmethodother_adm) == "haice" ~ "taxi",
       as.character(travelmethodother_adm) %in% c("bus ( kisire luxury)","bus") ~ "bus",
       as.character(travelmethodother_adm) %in% c("boat and taxi","boat and tax") ~ "boat + taxi",
       TRUE ~ as.character(travelmethodother_adm)
-    ),
+    )),
     
     travelmethod_adm_new = factor(
       case_when(
@@ -556,10 +553,11 @@ dat_clean <- dat_clean %>%
       cbind(spo2site1_pc_oxi_adm,
             spo2site2_pc_oxi_adm),
       na.rm = TRUE),
-  spo2_adm_cat = case_when(
+  spo2_adm_cat = factor(
+    case_when(
     spo2_adm < 90 ~ "90%",
     spo2_adm <= 95 ~ "90%-95%",
-    spo2_adm > 95 ~ "95%"
+    spo2_adm > 95 ~ "95%")
   ),
   
     # MUAC 
@@ -767,7 +765,15 @@ expected_age_ug <- c(
 dat_clean$expected_age_ug <- expected_age_ug[dat_clean$childedulevel_adm]
 
 # School start date (Feb 1 of admission year)
-dat_clean$school_start <- as.Date(paste0(year(dat_clean$admitdate_adm), "-02-01"))
+dat_clean$admitdate_adm <- as.Date(dat_clean$admitdate_adm)
+# dat_clean$school_start <- as.Date(paste0(year(dat_clean$admitdate_adm), "-02-01"))
+dat_clean$school_start <- as.Date(
+  ifelse(
+    !is.na(dat_clean$admitdate_adm),
+    paste0(year(dat_clean$admitdate_adm), "-02-01"),
+    NA
+  )
+)
 
 # Actual age at school start (in years)
 dat_clean$actual_age_at_school_start <- year(dat_clean$school_start) - year(dat_clean$dob_adm)
@@ -776,13 +782,18 @@ dat_clean$actual_age_at_school_start <- year(dat_clean$school_start) - year(dat_
 dat_clean$age_diff_school_start <- dat_clean$expected_age_ug - dat_clean$actual_age_at_school_start
 
 # Categorise
-dat_clean$childedulevel_adm_new <- case_when(
-  dat_clean$age_diff_school_start == 0 ~ "On track",
-  dat_clean$age_diff_school_start >  0 ~ "Early",
+# dat_clean$childedulevel_adm_new <- case_when(
+#   dat_clean$age_diff_school_start == 0 ~ "On track",
+#   dat_clean$age_diff_school_start >  0 ~ "Early",
+#   dat_clean$age_diff_school_start <  0 ~ "Off track",
+#   TRUE ~ NA_character_
+# )
+dat_clean$childedulevel_adm_new <- factor(
+  case_when(
+  dat_clean$age_diff_school_start >= 0 ~ "On track",
   dat_clean$age_diff_school_start <  0 ~ "Off track",
   TRUE ~ NA_character_
-)
-
+))
 table(dat_clean$childedulevel_adm_new)
 
 
@@ -791,8 +802,11 @@ table(dat_clean$childedulevel_adm_new)
 # ~~~~~~~~~~~~~~~~~~~~~
 
 # Recode sex to numeric (1 = male, 2 = female)
-dat_clean$sex_adm_new <- ifelse(dat_clean$sex_adm == "Male", 1,
-                                ifelse(dat_clean$sex_adm == "Female", 2, NA))
+dat_clean$sex_adm_new <- factor(
+  ifelse(dat_clean$sex_adm == "Male", "Male",
+         ifelse(dat_clean$sex_adm == "Female", "Female", NA)),
+  levels = c("Female", "Male")  # Female is reference group
+)
 table(dat_clean$sex_adm_new)
 
 # Convert MUAC to cm 
@@ -801,9 +815,12 @@ dat_clean$muac_cm <- dat_clean$muac_mm_adm / 10
 # Convert age to days FIRST
 dat_clean$agecalc_days <- dat_clean$agecalc_adm * (365.25 / 12)
 
+dat_clean$sex_adm_wgsr <- ifelse(dat_clean$sex_adm == "Male", 1,
+                                 ifelse(dat_clean$sex_adm == "Female", 2, NA))
+
 dat_clean <- addWGSR(
   data       = dat_clean,
-  sex        = "sex_adm_new",
+  sex        = "sex_adm_wgsr",
   firstPart  = "weight_kg_adm",
   secondPart = "agecalc_days",
   index      = "wfa",
@@ -812,7 +829,7 @@ dat_clean <- addWGSR(
 
 dat_clean <- addWGSR(
   data       = dat_clean,
-  sex        = "sex_adm_new",
+  sex        = "sex_adm_wgsr",
   firstPart  = "height_cm_adm",
   secondPart = "agecalc_days",
   index      = "hfa",
@@ -821,7 +838,7 @@ dat_clean <- addWGSR(
 
 dat_clean <- addWGSR(
   data       = dat_clean,
-  sex        = "sex_adm_new",
+  sex        = "sex_adm_wgsr",
   firstPart  = "weight_kg_adm",
   secondPart = "height_cm_adm",
   thirdPart = "agecalc_adm",
@@ -834,37 +851,55 @@ class(dat_clean$weight_for_age)
 class(dat_clean$height_for_age)
 class(dat_clean$bmi_for_age)
 summary(dat_clean$agecalc_adm)
+sum(!is.na(dat_clean$height_for_age))
+sum(!is.na(dat_clean$bmi_for_age))
+sum(!is.na(dat_clean$weight_for_age))
+
+head(dat_clean$height_for_age[!is.na(dat_clean$height_for_age)])
+head(dat_clean$bmi_for_age[!is.na(dat_clean$bmi_for_age)])
+head(dat_clean$weight_for_age[!is.na(dat_clean$weight_for_age)])
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Z-score classifications                              #######
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+
 # Weight-for-age Z score
-dat_clean$weight_for_age_cat <- case_when(
+dat_clean$weight_for_age_cat <- factor(
+  case_when(
   dat_clean$weight_for_age < -3              ~ "<-3",
   dat_clean$weight_for_age >= -3 &
     dat_clean$weight_for_age < -2            ~ "-3 to -2",
   dat_clean$weight_for_age >= -2             ~ ">-2",
   TRUE                             ~ NA_character_
+ ),
+ levels = c(">-2", "-3 to -2", "<-3") # >-2 is reference group (healthy)
 )
 
 # Length/Height-for-age Z score
-dat_clean$height_for_age_cat <- case_when(
+dat_clean$height_for_age_cat <- factor(
+  case_when(
   dat_clean$height_for_age < -3              ~ "<-3",
   dat_clean$height_for_age >= -3 &
     dat_clean$height_for_age < -2            ~ "-3 to -2",
   dat_clean$height_for_age >= -2             ~ ">-2",
   TRUE                             ~ NA_character_
+),
+levels = c(">-2", "-3 to -2", "<-3") # >-2 is reference group (healthy)
 )
 
 # BMI Z score
-dat_clean$bmi_for_age_cat <- case_when(
+dat_clean$bmi_for_age_cat <- factor(
+  case_when(
   dat_clean$bmi_for_age < -3              ~ "<-3",
   dat_clean$bmi_for_age >= -3 &
     dat_clean$bmi_for_age < -2            ~ "-3 to -2",
   dat_clean$bmi_for_age >= -2             ~ ">-2",
   TRUE                             ~ NA_character_
+),
+levels = c(">-2", "-3 to -2", "<-3") # >-2 is reference group (healthy)
 )
+
 
 # Quick check
 table(dat_clean$height_for_age_cat,  useNA = "always")
@@ -883,7 +918,7 @@ summary(dat_clean$spo2_dis)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # Only keep final datasets
-to_keep <- c("dat_uganda", "dat_rwanda_tz", "dat_raw", "dat_subset", "dat_clean", "redcap_date")
+to_keep <- c("dat_UG", "dat_RT", "dat_raw", "dat_subset", "dat_clean", "redcap_date")
 rm(list = setdiff(ls(), to_keep))
 
 save.image(paste0("Workspace/Create_Cleaned_Data (", redcap_date, ").RData"))
