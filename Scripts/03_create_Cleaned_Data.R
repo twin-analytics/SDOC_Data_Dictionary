@@ -1,10 +1,10 @@
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #  PROJECT: REDCap Multi-country Pediatric Sepsis Dataset
 #  SCRIPT: 03_Create_Cleaned_Data.R
 #  PURPOSE: Combine, clean, and prepare harmonized datasets 
 #           from Uganda, Rwanda and Tanzania for further analysis.
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~
 # LOAD LIBRARIES    #######
@@ -19,27 +19,29 @@ library(dplyr)     # Data manipulation (part of tidyverse)
 library(sjlabelled)# Label handling for survey data
 library(Hmisc)     # Label management, summary stats
 library(labelled)
-library(zscorer) # WHO child growth z-scores
+library(zscorer)   # WHO child growth z-scores
 library(lubridate)
 library(officer)
 library(flextable)
 library(patchwork)
 library(ggplot2)
 library(collapse)
+library(mice)        # for multiple imputation
+
 
 # For Exploratory Data Analysis
 library(DataExplorer)# Automated data exploration
 library(SmartEDA)    # Data profiling
 library(dlookr)      # Data diagnosis and visualization
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# LOAD DATA  AND PREPARE DATASETS #####
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# LOAD DATA  AND PREPARE DATASETS ####
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Load country-specific REDCap label scripts
 # Rename the loaded data and remove the original 'data' object.
 # This is done to prevent potential overwriting when loading the next dataset.
 
-redcap_date <- "2026-05-06"
+redcap_date <- "2026-07-22"
 
 dat_UG <- local({
   source("Scripts/01_Redcap_Labelsv0.02.R", local = TRUE)
@@ -47,9 +49,29 @@ dat_UG <- local({
 })
 
 dat_RT <- local({
-  source("Scripts/02_RedCap_Labelsv0.02.R", local = TRUE)
-data})
+  source("Scripts/02_RedCap_Labelsv0.03.R", local = TRUE)
+  data})
 
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# HELPER FUNCTIONS          #########
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Apply helper function to reapply variable labels
+apply_labels <- function(data,
+                         labels){
+  
+  common_vars <- intersect(names(data), names(labels))
+  
+  for(i in common_vars)
+    if(!is.null(labels[[i]]) && 
+       !is.na(labels[[i]])) {
+      labelled::var_label(data[[i]]) <- labels[[i]]
+    }
+  
+  data
+}
+
+# Filter patients 
 RT_Patients <- dat_RT %>% 
   filter(country_adm != "uganda")
 
@@ -59,39 +81,50 @@ dat_RT <- dat_RT %>%
 # Quick checks
 unique(dat_UG$redcap_event_name)
 unique(dat_RT$redcap_event_name)
-dim(dat_UG)
-dim(dat_RT)
 
 # Identify variables that differ between datasets
 setdiff(colnames(dat_UG), colnames(dat_RT))
 setdiff(colnames(dat_RT)[!grepl("\\.factor$", colnames(dat_RT))], colnames(dat_UG))
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# HANDLE LABELLED VARIABLES BEFORE MERGING #####
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# Count labelled variables
-sum(sapply(dat_UG, is.labelled))
-sum(sapply(dat_RT, is.labelled))
-
-# Save variable labels before merging
-label_vars_uganda <- get_label(dat_UG)
-label_vars_rwanda <- get_label(dat_RT)
-
-# Temporarily remove labels (to avoid bind_rows() errors)
-dat_UG_clean <- remove_all_labels(dat_UG)
-dat_rwanda_clean <- remove_all_labels(dat_RT)
-
-# Merge datasets safely
-dat_raw <- bind_rows(dat_UG_clean, dat_rwanda_clean)
-
-# Reapply labels
-label(dat_raw) <- as.list(c(label_vars_uganda, label_vars_rwanda))[names(dat_raw)]
-
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # GLOBAL DATA MANIPULATIONS  ####
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Extract labels from both datasets
+labels_UG <- var_label(dat_UG)
+labels_RT <- var_label(dat_RT)
+
+# Combine datasets
+dat_raw <- bind_rows(
+  dat_UG, dat_RT
+)
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## Combine variable labels
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# var_labels <- labelled::var_label(dat_raw)
+
+all_labels <- labels_RT
+
+all_labels[names(labels_UG)] <- labels_UG
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## Remove labels
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# dat_raw <- bind_rows(
+#   remove_all_labels(dat_UG),
+#   remove_all_labels(dat_RT)
+# )
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## Restore labels
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+labelled::var_label(dat_raw) <- all_labels
+
 
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~
 ## Replace Factors Cols ####
@@ -124,40 +157,9 @@ label(dat_raw) <- as.list(label_vars)
 dat_clean <- dat_raw %>% 
   clean_names()
 
-
-## ~~~~~~~~~~~~~~~~~~~~~~~~~
-## Missingness Audit        ####
-## ~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# Overall missingness count per column
-missing_audit <- dat_clean |>
-  summarise(across(everything(), \(x) sum(is.na(x)))) |>
-  tidyr::pivot_longer(everything(), names_to = "column", values_to = "n_missing") |>
-  mutate(
-    pct_missing = round(n_missing / nrow(dat_clean) * 100, 1),
-    # Tag each column with its form suffix (e.g., _adm, _dis, _fup)
-    form = dplyr::case_when(
-      grepl("_adm$", column) ~ "admission",
-      grepl("_dis$", column) ~ "discharge",
-      grepl("_fup$", column) ~ "follow_up",
-      TRUE                   ~ "other"
-    )
-  ) |>
-  filter(n_missing > 0) |>
-  arrange(desc(pct_missing))
-
-# Print summary: how many columns have missing data per form
-missing_audit |>
-  dplyr::count(form, name = "cols_with_missing")
-
-# Columns missing >20% of values — may need attention
-less_than_20 <- missing_audit |>
-  filter(pct_missing > 20)
-
-
-## ~~~~~~~~~~~~~~~~~~~~~~~~~
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ## Remove Consent and QOL (FSS/PedsQL) Sections ####
-## ~~~~~~~~~~~~~~~~~~~~~~~~~
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # Identify which row each form starts/ends
 # Store form index and and colnames into a data frame
@@ -209,7 +211,7 @@ dat_clean <- dat_clean %>%
 # Subsequent data manipulations may remove labels since tidyverse
 #  functions are not compatible with labels and will get overwritten
 # Need to make sure to store the labels so we can re-apply them again later
-label_vars <- sapply(dat_clean, label)
+ label_vars <- sapply(dat_clean, label)
 
 
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -355,9 +357,9 @@ dat_clean <- dat_clean %>%
                 )))
 
 
-## ~~~~~~~~~~~~~~~~~~~~~~~~~
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ## Re-level Yes/No Variables ####
-## ~~~~~~~~~~~~~~~~~~~~~~~~~
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # Currently, for yes/no variables, yes is the reference group
 # We need to make it so no is the reference
@@ -380,6 +382,12 @@ dat_clean <- dat_clean %>%
   # Apply function na_if across all character columns
   mutate(across(where(is.character), ~na_if(., "")))
 
+## ~~~~~~~~~~~~~~~~~~~~
+## Re-apply labels ####
+## ~~~~~~~~~~~~~~~~~~~~
+
+label(dat_clean) <- as.list(label_vars)
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # FILL DOWN NON-FOLLOWUP VARIABLES ####
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -395,25 +403,6 @@ levels(dat_clean$redcap_event_name)
 autopsy_rows <- dat_clean %>% 
   filter(redcap_event_name == "Autopsy")
 
-autopsy_rows %>% 
-  select(studyid_adm, ageadmit_adm, studygroup_adm, infection_adm, excludeadmit_adm,
-         consenttype_adm, consentobtained_adm, admitdate_adm, attendant_adm, attendantsex_adm) %>% 
-  glimpse()
-View(autopsy_rows)
-
-adm_rows <- dat_clean %>% 
-  filter(redcap_event_name == c("hospitalization and discharge"))
-glimpse(adm_rows)
-
-event_rows <- dat_clean %>% 
-  filter(redcap_event_name %in% c("2 month discharge", "4 month discharge", "6 month discharge", "12 month discharge", "Autopsy"))
-
-autopsy_rows %>% 
-  select(studyid_adm, redcap_event_name, infection_adm, malariastatuspos_adm, death_dis) %>% 
-  print(n=Inf)
-
-table(dat_clean$infection_adm); table(autopsy_rows$malariastatuspos_adm)
-
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # FILL DOWN AUTOPSY ROWS   ####
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -423,29 +412,32 @@ table(dat_clean$infection_adm); table(autopsy_rows$malariastatuspos_adm)
 #   group_by(studyid_adm) %>%
 #   fill(-all_of(followup_cols), .direction = "up") %>%
 #   ungroup()
-
-followup_cols <- grep("_fol", colnames(dat_clean), value = TRUE)
-fill_vars <- colnames(dat_clean)[!(colnames(dat_clean) %in% followup_cols)]
-
-
-dat_clean[, fill_vars] <- dat_clean[, fill_vars] %>%
-  TRA(
-    STATS = ffirst(dat_clean[, fill_vars], g = dat_clean$studyid_adm, na.rm = TRUE),
-    FUN = "replace_na",
-    g = dat_clean$studyid_adm
-  )
-
-
-dat_clean[, fill_vars] <- dat_clean[, fill_vars] %>%
-  TRA(
-    STATS = flast(dat_clean[, fill_vars], g = dat_clean$studyid_adm, na.rm = TRUE),
-    FUN = "replace_na",
-    g = dat_clean$studyid_adm
-  )
+system.time({
+  followup_cols <- grep("_fol", colnames(dat_clean), value = TRUE)
+  fill_vars <- colnames(dat_clean)[!(colnames(dat_clean) %in% followup_cols)]
+  
+  
+  dat_clean[, fill_vars] <- dat_clean[, fill_vars] %>%
+    TRA(
+      STATS = ffirst(dat_clean[, fill_vars], g = dat_clean$studyid_adm, na.rm = TRUE),
+      FUN = "replace_na",
+      g = dat_clean$studyid_adm
+    )
+  
+  
+  dat_clean[, fill_vars] <- dat_clean[, fill_vars] %>%
+    TRA(
+      STATS = flast(dat_clean[, fill_vars], g = dat_clean$studyid_adm, na.rm = TRUE),
+      FUN = "replace_na",
+      g = dat_clean$studyid_adm
+    )
+  
+})
 
 # Then apply the filter
 dat_clean <- dat_clean %>% 
   filter(redcap_event_name != "Autopsy")
+
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ONLY FINAL VISIT         ####
@@ -460,6 +452,7 @@ dat_subset <- dat_clean %>%
 
 dat_clean <- dat_subset
 
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # CHILDREN DATA GLOBAL MANIPULATION                                         ####
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -468,13 +461,11 @@ table(dat_clean$studygroup_adm)
 range(dat_clean$agecalc_adm, na.rm = TRUE)
 sum(is.na(dat_clean$agecalc_adm))
 
-
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# ADMISSION VARIABLES                                                     #####
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 dat_clean <- dat_clean %>%
   mutate(
-    
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # ADMISSION VARIABLES                                   #####
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
     # Prior hospitalization
     priorhosp_adm_new = case_when(
@@ -548,7 +539,10 @@ dat_clean <- dat_clean %>%
       levels = c("No","Yes")
     ),
     
+    # ~~~~~~~~~~~~~
     # Maternal HIV
+    # ~~~~~~~~~~~~~
+    
     momhiv_adm_new = factor(
       case_when(
         momhiv_adm == "Positive" ~ "Yes",
@@ -569,7 +563,7 @@ dat_clean <- dat_clean %>%
         temp_c_adm <= 39 ~ "37.6–39",
         temp_c_adm > 39 ~ ">39"
       ),
-      levels = c("<36.5","36.5–37.5","37.6–39",">39")
+      levels = c("36.5–37.5", "<36.5", "37.6–39", ">39")
     ),
     
     # ~~~~~~~~~~~~~~
@@ -599,7 +593,20 @@ dat_clean <- dat_clean %>%
       ),
       levels = c("Normal (2.5–11)","Hypoglycemia (<2.5)","Hyperglycemia (>11)")
     ),
-    
+  
+  # ~~~~~~~~~~~~~~~~~
+  # LACTATE   
+  # ~~~~~~~~~~~~~~~~~
+  lactate_mmolpl_adm_new = factor(
+    case_when(
+      is.na(lactate_mmolpl_adm) ~ NA_character_,
+      lactate_mmolpl_adm < 2 ~ "Normal (<2)",
+      lactate_mmolpl_adm <= 5  ~ "Moderate (2-5)",
+      lactate_mmolpl_adm > 5 ~ "Severe (>5)"
+    ),
+    levels = c("Normal", "Moderate", "Severe")
+  ),
+  
     # ~~~~~~~~~~~~~~~~~
     # SPO2 ADMISSION
     # ~~~~~~~~~~~~~~~~~
@@ -610,11 +617,15 @@ dat_clean <- dat_clean %>%
       na.rm = TRUE),
   spo2_adm_cat = factor(
     case_when(
-    spo2_adm < 90 ~ "90%",
+    spo2_adm < 90 ~ "<90%",
     spo2_adm <= 95 ~ "90%-95%",
-    spo2_adm > 95 ~ "95%")
+    spo2_adm > 95 ~ ">95%")
   ),
-  
+  spo2_adm_cat <- factor(
+    spo2_adm_cat,
+    levels = c("95%", "90%-95%", "90%")
+    ),
+                         
     # MUAC 
     muac_mm_adm_new = factor(
       case_when(
@@ -624,9 +635,9 @@ dat_clean <- dat_clean %>%
         )
     ),
     
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # DATE VARIABLES                                        #####
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~
+    # DATE VARIABLES     #####
+    # ~~~~~~~~~~~~~~~~~~~~~~~~
     
     admit_datetime = ymd_hm(paste(admitdate_adm, admittime_adm)),
     disch_datetime = ymd_hm(paste(dischdate_dis, dischtime_dis)),
@@ -638,9 +649,9 @@ dat_clean <- dat_clean %>%
     agecalc_adm_new = agecalc_adm/12
   )
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# DISCHARGE VARIABLES                                    ####
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# DISCHARGE VARIABLES                                                       ####
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 dat_clean <- dat_clean %>% 
   mutate(
@@ -664,10 +675,11 @@ spo2_dis = rowMeans(
   na.rm = TRUE
 ),
 spo2_dis_cat = case_when(
-  spo2_dis < 90 ~ "90%",
+  spo2_dis < 90 ~ "<90%",
   spo2_dis <= 95 ~ "90%-95%",
-  spo2_dis > 95 ~ "95%"
-),
+  spo2_dis > 95 ~ ">95%",
+  TRUE ~ NA_character_
+  ),
 
 # Hypoxemia
 hypoxemia_dis = factor(
@@ -768,6 +780,66 @@ damareason_new_98 = factor(damareason_new_98, levels = c("Unchecked", "Checked")
 
 )
 
+# OXYGEN SATURATION AT ADMISSION
+dat_clean <- dat_clean |>
+  mutate(
+    spo2_adm = rowMeans(
+      pick(
+        spo2site1_pc_oxi_adm,
+        spo2site2_pc_oxi_adm
+      ),
+      na.rm = TRUE
+    ),
+    spo2_adm_cat = case_when(
+      is.na(spo2_adm) ~ NA_character_,
+      spo2_dis < 90 ~ "<90%",
+      between(spo2_adm, 90, 95) ~ "90%-95%",
+      spo2_adm > 95 ~ ">95%"
+    ),
+    spo2_adm_cat = factor(
+      spo2_adm_cat,
+      levels = c("<90%", "90%-95%", ">95%")
+    )
+  )
+
+table(dat_clean$spo2_adm_cat)
+
+# OXYGEN SATURATION AT DISRCHARGE
+dat_clean <- dat_clean |>
+  mutate(
+    spo2_dis = rowMeans(
+      pick(
+        spo2site1_pc_oxi_dis,
+        spo2site2_pc_oxi_dis
+      ),
+      na.rm = TRUE
+    ),
+    spo2_dis_cat = case_when(
+      is.na(spo2_dis) ~ NA_character_,
+      spo2_dis < 90 ~ "<90%",
+      between(spo2_dis, 90, 95) ~ "90%-95%",
+      spo2_dis > 95 ~ ">95%"
+    ),
+    spo2_dis_cat = factor(
+      spo2_dis_cat,
+      levels = c("<90%", "90%-95%", ">95%")
+    )
+  )
+
+
+# Refactor
+dat_clean$spo2_adm_cat <- factor(
+  dat_clean$spo2_adm_cat,
+  levels = c(">95%", "90%-95%", "<90%")
+  )
+
+dat_clean$spo2_dis_cat <- factor(
+  dat_clean$spo2_dis_cat,
+  levels = c(">95%", "90%-95%", "<90%")
+)
+
+levels(dat_clean$spo2_adm_cat)
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # OTHER DERIVED VARIABLES       #####
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -813,9 +885,9 @@ dat_clean$childedulevel_adm_new <- factor(
 table(dat_clean$childedulevel_adm_new)
 
 
-# ~~~~~~~~~~~~~~~~~~~~~
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Anthropometry Derived ####
-# ~~~~~~~~~~~~~~~~~~~~~
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # Recode sex to numeric (1 = male, 2 = female)
 dat_clean$sex_adm_new <- factor(
@@ -930,9 +1002,9 @@ summary(dat_clean$spo2_adm)
 summary(dat_clean$spo2_dis)
 
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# SES Index Score                   #####
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# SES INDEX SCORE                                               #####
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Each item contributes 1 point if the "better" condition is present
@@ -1009,51 +1081,45 @@ dat_clean <- dat_clean %>%
     everything()
   )
 
-# Convert SES items to numeric
+
+# COMA SCORE COMPUTATION
 dat_clean <- dat_clean %>%
   mutate(
-    across(
-      c(
-        ses_flooring,
-        ses_cooking,
-        ses_tv,
-        ses_fridge,
-        ses_smartphone,
-        ses_motorcycle,
-        ses_car
-      ),
-      ~ as.integer(.)
+    eye_score = case_when(
+      bcseye_adm == "Watches or follows" ~ 1,
+      bcseye_adm == "Fails to watch or follow" ~ 0,
+      TRUE ~ NA_real_
+    ),
+    motor_score = case_when(
+      bcsmotor_adm == "Localizes painful stimulus" ~ 2,
+      bcsmotor_adm == "Withdraws limb from painful stimulus" ~ 1,
+      bcsmotor_adm == "No response or inappropriate response" ~ 0,
+      TRUE ~ NA_real_
+    ),
+    verbal_score = case_when(
+      bcsverbal_adm == "Cries appropriately with pain, or, if verbal, speaks" ~ 2,
+      bcsverbal_adm == "Moan or abnormal cry with pain" ~ 1,
+      bcsverbal_adm == "No vocal response to pain" ~ 0,
+      TRUE ~ NA_real_
+    ),
+    coma_score = eye_score + motor_score + verbal_score
+  )
+
+
+dat_clean <- dat_clean %>%
+  mutate(
+    coma_score_cat = case_when(
+      coma_score == 5 ~ "Normal",
+      coma_score < 5  ~ "Abnormal",
+      TRUE ~ NA_character_
+    ),
+    coma_score_cat = factor(
+      coma_score_cat,
+      levels = c("Normal", "Abnormal")
     )
   )
 
-# Mean of Each SES Item by Country
-ses_mean <- dat_clean %>%
-  group_by(country_adm) %>%
-  summarise(
-    n = n(),
-    flooring_pct      = round(mean(ses_flooring, na.rm = TRUE) * 100, 1),
-    toilet_pct        = round(mean(ses_toilet, na.rm = TRUE) * 100, 1),
-    cooking_pct       = round(mean(ses_cooking, na.rm = TRUE) * 100, 1),
-    water_pct         = round(mean(ses_water, na.rm = TRUE) * 100, 1),
-    electricity_pct   = round(mean(ses_electricity, na.rm = TRUE) * 100, 1),
-    tv_pct            = round(mean(ses_tv, na.rm = TRUE) * 100, 1),
-    fridge_pct        = round(mean(ses_fridge, na.rm = TRUE) * 100, 1),
-    smartphone_pct    = round(mean(ses_smartphone, na.rm = TRUE) * 100, 1),
-    motorcycle_pct    = round(mean(ses_motorcycle, na.rm = TRUE) * 100, 1),
-    car_pct           = round(mean(ses_car, na.rm = TRUE) * 100, 1),
-    median_ses_score  = median(sesindex_sum, na.rm = TRUE),
-    iqr_ses_score_l   = quantile(sesindex_sum, 0.25, na.rm = TRUE),
-    iqr_ses_score_u   = quantile(sesindex_sum, 0.75, na.rm = TRUE),
-    .groups = "drop"
-  )
-ses_mean
-
-write.csv(ses_mean, "Results/ses_mean.csv")
-
-# QUICK CHECKS
-table(dat_clean$toilet_pct, useNA = "always")
-table(dat_clean$water_pct, useNA = "always")
-table(dat_clean$electricity_pct, useNA = "always")
+table(dat_clean$coma_score_cat)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # QUICK DISTRIBUTION CHECK             ######
@@ -1072,110 +1138,146 @@ with(dat_clean, table(country_adm, sesindex_cat, useNA = "always"))
 # PLOTS    ####
 # ~~~~~~~~~~~~~
 
-dat_clean %>% 
-  filter(!is.na(country_adm)) %>% 
-  select(country_adm, sesindex_sum,
-         ses_flooring, ses_toilet, ses_cooking, ses_water,
-         ses_electricity, ses_tv, ses_fridge, ses_smartphone,
-         ses_motorcycle, ses_car) %>% 
-  pivot_longer(
-    starts_with("ses_"),
-    names_to = "item",
-    values_to = "has_asset"
-  ) %>% 
-  filter(!is.na(sesindex_sum), !is.na(has_asset)) %>% 
-  mutate(
-    item = str_to_title(str_remove(item, "ses_")),
-    has_asset = factor(has_asset,
-                       levels = c(0, 1),
-                       labels = c("No", "Yes"))
-  ) %>% 
-  ggplot(aes(x = has_asset, y = sesindex_sum, fill = country_adm)) +
-  geom_boxplot(outlier.size = 0.4, linewidth = 0.4) +
-  facet_wrap(~item, nrow = 2) +
-  scale_fill_brewer(palette = "Set2") +
-  labs(
-    x = "Owns Asset",
-    y = "SES Index Score (0–10)",
-    fill = "Country",
-    title = "SES Score Distribution by Asset Ownership and Country"
-  ) +
-  theme(
-    legend.position = "bottom",
-    strip.text = element_text(face = "bold")
-  )
+# dat_clean %>% 
+#   filter(!is.na(country_adm)) %>% 
+#   select(country_adm, sesindex_sum,
+#          ses_flooring, ses_toilet, ses_cooking, ses_water,
+#          ses_electricity, ses_tv, ses_fridge, ses_smartphone,
+#          ses_motorcycle, ses_car) %>% 
+#   pivot_longer(
+#     starts_with("ses_"),
+#     names_to = "item",
+#     values_to = "has_asset"
+#   ) %>% 
+#   filter(!is.na(sesindex_sum), !is.na(has_asset)) %>% 
+#   mutate(
+#     item = str_to_title(str_remove(item, "ses_")),
+#     has_asset = factor(has_asset,
+#                        levels = c(0, 1),
+#                        labels = c("No", "Yes"))
+#   ) %>% 
+#   ggplot(aes(x = has_asset, y = sesindex_sum, fill = country_adm)) +
+#   geom_boxplot(outlier.size = 0.4, linewidth = 0.4) +
+#   facet_wrap(~item, nrow = 2) +
+#   scale_fill_brewer(palette = "Set2") +
+#   labs(
+#     x = "Owns Asset",
+#     y = "SES Index Score (0–10)",
+#     fill = "Country",
+#     title = "SES Score Distribution by Asset Ownership and Country"
+#   ) +
+#   theme(
+#     legend.position = "bottom",
+#     strip.text = element_text(face = "bold")
+#   )
+# 
+# # HISTOGRAM ####
+# # Overall SES score distribution with category shading 
+# ggplot(
+#   dat_clean %>%  filter(!is.na(sesindex_sum)),
+#   aes(x = sesindex_sum, fill = country_adm)
+# ) +
+#   geom_bar(position = "dodge") +
+#   scale_x_continuous(breaks = 0:10) +
+#   scale_fill_brewer(palette = "Set2", na.value = "grey70") +
+#   labs(
+#     title = "Overall SES Score Distribution",
+#     x = "SES Index Score (0–10)", y = "Count", fill = "Country"
+#   ) +
+#   theme(legend.position = "bottom")
+# 
+# # HEATMAP ####
+# dat_clean %>%
+#   select(
+#     country_adm,
+#     ses_flooring,
+#     ses_toilet,
+#     ses_cooking,
+#     ses_water,
+#     ses_electricity,
+#     ses_tv,
+#     ses_fridge,
+#     ses_smartphone,
+#     ses_motorcycle,
+#     ses_car
+#   ) %>%
+#   pivot_longer(
+#     -country_adm,
+#     names_to = "item",
+#     values_to = "value"
+#   ) %>%
+#   group_by(country_adm, item) %>%
+#   summarise(
+#     pct_yes = mean(value == 1, na.rm = TRUE) * 100,
+#     .groups = "drop"
+#   ) %>%
+#   ggplot(
+#     aes(
+#       x = country_adm,
+#       y = item,
+#       fill = pct_yes
+#     )
+#   ) +
+#   geom_tile() +
+#   geom_text(
+#     aes(label = round(pct_yes, 0)),
+#     size = 3
+#   ) +
+#   labs(
+#     title = "SES Asset Ownership (%) by Country",
+#     x = "Country",
+#     y = ""
+#   ) +
+#   theme_minimal()
+# 
+# 
+# # BOXPLOT ####
+# ggplot(
+#   dat_clean %>%  filter(!is.na(sesindex_sum), !is.na(country_adm)),
+#   aes(x = country_adm, y = sesindex_sum, fill = country_adm)) +
+#   geom_boxplot() +
+#   scale_fill_brewer(palette = "Set2") +
+#   labs(
+#     title = "SES Score Distribution by Country",
+#     x = NULL, y = "SES Index Score (0–10)"
+#   ) +
+#   theme(legend.position = "none")
+# 
+# # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# # SCATTER PLOT SES DISTRIBUTION IN TANZANIA ####
+# # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# # SES Distribution Among Deaths Only
+# 
+# dat_clean %>%
+#   filter(country_adm == "Tanzania",
+#          healthstatus_fol_new == "Died",
+#          !is.na(sesindex_sum)) %>%
+#   ggplot(aes(x = sesindex_sum)) +
+#   geom_bar() +
+#   scale_x_continuous(limits = c(0, 9), breaks = 0:10) +
+#   labs(
+#     title = "SES Distribution Among Deaths in Tanzania",
+#     x = "SES Index Score",
+#     y = "Number of Deaths"
+#   ) +
+#   theme_minimal()
+# 
+# # DENSITY PLOT ####
+# dat_clean %>%
+#   mutate(PD_death = as.factor(healthstatus_fol_new)) %>%
+#   filter(country_adm == "Tanzania",
+#          !is.na(sesindex_sum),
+#          !is.na(PD_death)) %>% 
+#   ggplot(aes(x = sesindex_sum, fill = PD_death)) +
+#   geom_density(alpha = 0.5) +
+#   scale_x_continuous(limits = c(0, 9), breaks = 0:9) +
+#   labs(
+#     title = "SES Distribution Among Deaths in Tanzania",
+#     x = "SES Index Score",
+#     y = "Density"
+#   ) +
+#   theme_minimal()
 
-# HISTOGRAM ####
-# Overall SES score distribution with category shading 
-ggplot(
-  dat_clean %>%  filter(!is.na(sesindex_sum)),
-  aes(x = sesindex_sum, fill = country_adm)
-) +
-  geom_bar(position = "dodge") +
-  scale_x_continuous(breaks = 0:10) +
-  scale_fill_brewer(palette = "Set2", na.value = "grey70") +
-  labs(
-    title = "Overall SES Score Distribution",
-    x = "SES Index Score (0–10)", y = "Count", fill = "Country"
-  ) +
-  theme(legend.position = "bottom")
-
-# HEATMAP ####
-dat_clean %>%
-  select(
-    country_adm,
-    ses_flooring,
-    ses_toilet,
-    ses_cooking,
-    ses_water,
-    ses_electricity,
-    ses_tv,
-    ses_fridge,
-    ses_smartphone,
-    ses_motorcycle,
-    ses_car
-  ) %>%
-  pivot_longer(
-    -country_adm,
-    names_to = "item",
-    values_to = "value"
-  ) %>%
-  group_by(country_adm, item) %>%
-  summarise(
-    pct_yes = mean(value == 1, na.rm = TRUE) * 100,
-    .groups = "drop"
-  ) %>%
-  ggplot(
-    aes(
-      x = country_adm,
-      y = item,
-      fill = pct_yes
-    )
-  ) +
-  geom_tile() +
-  geom_text(
-    aes(label = round(pct_yes, 0)),
-    size = 3
-  ) +
-  labs(
-    title = "SES Asset Ownership (%) by Country",
-    x = "Country",
-    y = ""
-  ) +
-  theme_minimal()
-
-
-# BOXPLOT ####
-ggplot(
-  dat_clean %>%  filter(!is.na(sesindex_sum), !is.na(country_adm)),
-  aes(x = country_adm, y = sesindex_sum, fill = country_adm)) +
-  geom_boxplot() +
-  scale_fill_brewer(palette = "Set2") +
-  labs(
-    title = "SES Score Distribution by Country",
-    x = NULL, y = "SES Index Score (0–10)"
-  ) +
-  theme(legend.position = "none")
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~
 # POST DICHARGE OUTCOME ####
@@ -1260,7 +1362,7 @@ dat_clean <- dat_clean %>%
     ),
     
     pddcaresought_fol_new = factor(
-      recode(
+      dplyr::recode(
       as.character(pddcaresought_fol),
       "Yes - once" = "Once",
       "Yes - more than once" = "More than Once",
@@ -1274,8 +1376,452 @@ dat_clean <- dat_clean %>%
     )
   )
 
-with(dat_clean, table(deathcause_pda_new))
-with(dat_clean, table(deathcause_pda))
+
+# VARIABLES TO ADD IN THE DATA DICTIONARY
+additional_vars <- c(
+  "urine_adm",
+  "urinesymp_adm",
+  "urinecolor_adm",
+  "teaprobtime_adm",
+  "kidneydis_adm",
+  "swelling_adm",
+  "dehydrationappearance_adm",
+  "dehydrationeyes_adm",
+  "dehydrationthirst_adm",
+  "dehydrationturgor_adm",
+  "creatininemgdl_adm",
+  "creatinine_significant_adm",
+  "creatinineumoll_adm",
+  "creatinineoutside_adm",
+  "urinalysisdate_adm",
+  "urinalysistime_adm",
+  "urinalysisampm_adm")
+
+               
+# Combine Changes in urine color and urine color into a single variable.
+dat_clean <- dat_clean %>% 
+  mutate(
+    urine_color_cat = case_when(
+      urinesymp_adm == "No" ~ "No Changes",
+      urinesymp_adm == "Yes" & urinecolor_adm == "Deep yellow (concentrated)" ~ "Deep Yellow",
+      urinesymp_adm == "Yes" & urinecolor_adm == "Bloody" ~ "Bloody",
+      urinesymp_adm == "Yes" & urinecolor_adm == "Tea colored" ~ "Tea Colored",
+      TRUE ~ NA_character_
+    ),
+    urine_color_cat = factor(
+      urine_color_cat,
+      levels = c("No Changes",
+                 "Bloody",
+                 "Deep Yellow",
+                 "Tea Colored")
+    )
+  )
+
+table(dat_clean$urine_color_cat)
+
+# Harmonize creatinine into a single variable
+creatininemgdl_adm = as.numeric(unclass(zap_labels(dat_clean$creatininemgdl_adm)))
+creatinineumoll_adm = as.numeric(unclass(zap_labels(dat_clean$creatinineumoll_adm)))
+
+# Implausible mg/dL values (<0.2 or >10)
+bad_mgdl <- dat_clean %>%
+  filter(creatininemgdl_adm < 0.2 | creatininemgdl_adm > 10)
+
+# Implausible µmol/L values (<20 or >2000)
+bad_umol <- dat_clean %>%
+  filter(creatinineumoll_adm < 20 | creatinineumoll_adm > 2000)
+
+nrow(bad_mgdl)
+nrow(bad_umol)
+
+Q1 <- quantile(dat_clean$creatinineumoll_adm, 0.25, na.rm = TRUE)
+Q3 <- quantile(dat_clean$creatinineumoll_adm, 0.75, na.rm = TRUE)
+IQR_val <- IQR(dat_clean$creatinineumoll_adm, na.rm = TRUE)
+
+upper_limit <- Q3 + 1.5 * IQR_val
+
+extreme_rows <- dat_clean %>%
+  filter(creatinineumoll_adm > upper_limit) %>% 
+  select(studyid_adm, country_adm, creatinineumoll_adm, creatininemgdl_adm)
+
+nrow(extreme_rows)
+
+summary(dat_clean$creatininemgdl_adm)
+summary(dat_clean$creatinineumoll_adm)
+summary(bad_mgdl$creatininemgdl_adm)
+summary(bad_umol$creatinineumoll_adm)
+
+bad_umol %>%
+  count(country_adm)
+
+boxplot(
+  dat_clean$creatinineumoll_adm,
+  main = "Creatinine µmol/L"
+  )
+
+hist(
+  dat_clean$creatinineumoll_adm,
+  breaks = 50,
+  main = "Creatinine µmol/L Distribution"
+  )
+
+dat_clean <- dat_clean %>%
+  mutate(
+    # Clean implausible values first
+    creatininemgdl_clean = ifelse(
+      creatininemgdl_adm < 0.2 | creatininemgdl_adm > 10,
+      NA_real_,
+      creatininemgdl_adm
+    ),
+    
+    creatinineumoll_clean = ifelse(
+      creatinineumoll_adm < 20 | creatinineumoll_adm > 2000,
+      NA_real_,
+      creatinineumoll_adm
+    ),
+    
+    # Harmonize into mg/dL
+    creatinine_mgdl_new = case_when(
+      !is.na(creatininemgdl_clean)  ~ creatininemgdl_clean,
+      !is.na(creatinineumoll_clean) ~ creatinineumoll_clean / 88.4,
+      TRUE ~ NA_real_
+    ),
+    
+    # Height numeric
+    height_cm_adm = as.numeric(height_cm_adm),
+    
+    # Calculate eGFR (Schwartz formula)
+    egfr_adm = ifelse(
+      !is.na(height_cm_adm) &
+        !is.na(creatinine_mgdl_new) &
+        creatinine_mgdl_new > 0,
+      0.413 * height_cm_adm / creatinine_mgdl_new,
+      NA_real_
+    )
+  )
+
+dat_clean <- dat_clean |>
+  mutate(
+    egfr_adm_cat = factor(
+      case_when(
+        is.na(egfr_adm) ~ NA_character_,
+        egfr_adm >= 90  ~ "Normal (≥90)",
+        egfr_adm >= 30  ~ "Reduced kidney function (30–89)",
+        TRUE            ~ "Severe kidney dysfunction (<30)"
+      ),
+      levels = c(
+        "Normal (≥90)",
+        "Reduced kidney function (30–89)",
+        "Severe kidney dysfunction (<30)"
+      )
+    )
+  )
+
+table(dat_clean$egfr_adm_cat)
+
+View(subset(dat_clean, studyid_adm == "0002-8P-HM-335"))
+
+extreme_rows %>%
+  filter(grepl("0002-8P-HM-335", studyid_adm))
+
+summary(dat_clean$egfr_adm)
+summary(dat_clean$creatinineumoll_adm)
+
+write.csv(extreme_rows, "Results/Extreme_rows.csv")
+
+# DEHYDRATION VARIABLES
+table(dat_clean$dehydrationappearance_adm, useNA = "ifany")
+
+table(dat_clean$dehydrationeyes_adm, useNA = "ifany")
+
+table(dat_clean$dehydrationthirst_adm, useNA = "ifany")
+
+table(dat_clean$dehydrationturgor_adm, useNA = "ifany")
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# WHO IMCI DEHYDRATION CLASSIFICATION                     #####      
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+dat_clean <- dat_clean |>
+  mutate(
+
+    # Severe dehydration signs
+    severe_general =
+      dehydrationappearance_adm == "Lethargic or unconscious",
+    
+    severe_eye =
+      dehydrationeyes_adm == "Sunken",
+    
+    severe_thirst =
+      dehydrationthirst_adm == "Drinks poorly, or not able to drink",
+    
+    severe_turgor =
+      dehydrationturgor_adm == "Goes back very slowly",
+    
+    
+    # Some dehydration signs
+    some_general =
+      dehydrationappearance_adm %in%
+      c(
+        "Restless, irritable",
+        "Lethargic or unconscious"
+      ),
+    
+    some_eye =
+      dehydrationeyes_adm == "Sunken",
+    
+    some_thirst =
+      dehydrationthirst_adm %in%
+      c(
+        "Thirsty, drinks eagerly",
+        "Drinks poorly, or not able to drink"
+      ),
+    
+    some_turgor =
+      dehydrationturgor_adm %in%
+      c(
+        "Goes back slowly",
+        "Goes back very slowly"
+      )
+    
+  ) |>
+  
+# Count dehydration signs
+rowwise() |>
+  mutate(
+    severe_dehydration_signs =
+      sum(
+        c(
+          severe_general,
+          severe_eye,
+          severe_thirst,
+          severe_turgor
+        ),
+        na.rm = TRUE
+      ),
+    
+    dehydration_signs =
+      sum(
+        c(
+          some_general,
+          some_eye,
+          some_thirst,
+          some_turgor
+        ),
+        na.rm = TRUE
+      )
+    
+  ) |>
+  ungroup() |>
+  
+# Assessment status and IMCI classification
+mutate(
+  dehydration_assessed =
+    if_any(
+      c(
+        dehydrationappearance_adm,
+        dehydrationeyes_adm,
+        dehydrationthirst_adm,
+        dehydrationturgor_adm
+      ),
+      ~ !is.na(.)
+    ),
+  
+  
+  dehydration_imci = case_when(
+    
+    !dehydration_assessed ~
+      "Not assessed",
+    
+    severe_dehydration_signs >= 2 ~
+      "Severe dehydration",
+    
+    dehydration_signs >= 2 ~
+      "Some dehydration",
+    
+    TRUE ~
+      "No dehydration"
+    
+  ),
+  
+  dehydration_imci =
+    factor(
+      dehydration_imci,
+      levels = c(
+        "Not assessed",
+        "No dehydration",
+        "Some dehydration",
+        "Severe dehydration"
+      )
+    )
+)
+
+
+table(
+  dat_clean$dehydration_adm,
+  dat_clean$dehydration_imci,
+  useNA = "ifany"
+)
+
+dat_clean |>
+  filter(
+    dehydration_adm == "No",
+    dehydration_imci == "Not assessed"
+  ) |>
+  count()
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# REAPPLY VARIABLE LABELS BACK                            #####
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+derived_labels  <- tibble::tribble(
+  ~Variable, ~Label,
+  
+  # ADMISSION / DEMOGRAPHICS
+  "site_adm", "Hospital site",
+  "Hospital_admission", "Hospital admission",
+  
+  "ageadmit_adm", "Eligible age at admission",
+  "agecalc_adm_new", "Age at admission (years)",
+  "studygroup_adm", "Study age group",
+  "sex_adm_wgsr", "Child sex for WHO growth standards",
+  "height_cm_adm", "Height in (cm)",
+  
+  "infection_adm", "Suspected or confirmed infection at admission",
+  "priorcare_adm", "Care sought before hospital admission",
+  "isreferral_adm", "Referral at admission",
+  "priorhosp_adm_new", "Previous hospitalization",
+  
+  "traveldist_adm_new", "Travel time to hospital",
+  "travelmethod_adm_new", "Mode of transport to hospital",
+  "travelmethodother_adm_new", "Other mode of transport",
+  
+  "bcgscar_adm", "BCG vaccination scar present",
+  "vaccpneumoc_adm", "Pneumococcal vaccination status",
+  "vaccdpt_adm", "DPT/Pentavalent vaccination status",
+  
+  "momalive_adm", "Biological mother alive",
+  "momageknown_adm", "Maternal age known",
+  "momhiv_adm_new", "Maternal HIV status",
+  "hiv_status_new", "Child HIV status",
+  "isprimarycaregiver_adm", "Is the person who brought the child to the hospital the childs primary caregiver?",
+  
+  # DATES
+  "admitdate_adm", "Date of Admission",
+  "admit_datetime", "Admission date and time",
+  "disch_datetime", "Discharge date and time",
+  "los_hours", "Length of hospital stay (hours)",
+  "los_days", "Length of hospital stay (days)",
+  
+  # VITAL SIGNS
+  "temp_c_adm_cat", "Axillary temperature (Celsius)",
+  "spo2_adm_cat", "Admission oxygen saturation (%)",
+  "spo2_adm", "Admission oxygen saturation (%)",
+  "spo2_dis", "Discharge oxygen saturation (%)",
+  "spo2_dis_cat", "Discharge oxygen saturation (%)",
+  "hypoxia", "Hypoxia (SpO₂ <95%)",
+  "hypoxemia_dis", "Discharge hypoxaemia (SpO₂ <90%)",
+  
+  # LABORATORY
+  "glucose_mmolpl_adm_new", "Blood glucose (mmol/L)",
+  "lactate_mmolpl_adm_new", "Lactate level (mmol/L)",
+  "anemia", "Anaemia category",
+  
+  # KIDNEY FUNCTION
+  "creatininemgdl_clean", "Serum creatinine (mg/dL)",
+  "creatinineumoll_clean", "Serum creatinine (µmol/L)",
+  "creatinine_mgdl_new", "Standardized serum creatinine (mg/dL)",
+  "egfr_adm", "Estimated glomerular filtration rate at admission",
+  "egfr_adm_cat", "Kidney function stage at admission",
+  
+  # URINE
+  "urine_adm", "Urine production in last 24 hours",
+  "urinesymp_adm", "Has the child had changes in urine color?",
+  "urine_color_cat", "Urine color",
+  "teaprobtime_adm", "Duration of tea-coloured urine",
+  "teareptepi_adm", "Previous episodes of tea-coloured urine",
+  "urinepain_adm", "Pain during urination",
+  "urinepaintime_adm", "Duration of painful urination",
+  
+  # DEHYDRATION
+  "dehydration_general_score", "Dehydration score: General appearance",
+  "dehydration_eye_score", "Dehydration score: Sunken eyes",
+  "dehydration_thirst_score", "Dehydration score: Thirst",
+  "dehydration_turgor_score", "Dehydration score: Skin turgor",
+  "severe_dehydration_signs", "Presence of severe dehydration signs",
+  "dehydration_signs", "Presence of dehydration signs",
+  "dehydration_imci", "IMCI dehydration classification",
+  "dehydration_imci_new", "IMCI dehydration classification",
+  
+  # NUTRITION / ANTHROPOMETRY
+  "muac_mm_adm_new", "Nutritional status (MUAC)",
+  "weight_for_age", "Weight-for-age Z-score (WAZ)",
+  "height_for_age", "Height-for-age Z-score (HAZ)",
+  "bmi_for_age", "BMI-for-age Z-score (BAZ)",
+  
+  "weight_for_age_cat", "Weight-for-age",
+  "height_for_age_cat", "Height-for-age",
+  "bmi_for_age_cat", "BMI-for-age",
+  
+  # COMA
+  "eye_score", "Blantyre Coma Scale: Eye score",
+  "motor_score", "Blantyre Coma Scale: Motor score",
+  "verbal_score", "Blantyre Coma Scale: Verbal score",
+  "coma_score", "Blantyre Coma Scale total score",
+  "coma_score_cat", "Blantyre Coma Scale category",
+  
+  # EDUCATION
+  "school_start", "Official school year start date",
+  "expected_age_ug", "Expected age at school level",
+  "actual_age_at_school_start", "Age at school year start",
+  "age_diff_school_start", "Difference from expected school age",
+  "childedulevel_adm_new", "School progression relative to age",
+  
+  # SOCIOECONOMIC STATUS
+  "ses_flooring", "Household flooring material",
+  "ses_toilet", "Household toilet facility",
+  "ses_cooking", "Primary cooking fuel",
+  "ses_water", "Primary household water source",
+  "ses_electricity", "Household electricity access",
+  "ses_tv", "Household ownership of a television",
+  "ses_fridge", "Household ownership of a refrigerator",
+  "ses_motorcycle", "Household ownership of a motorcycle",
+  "ses_car", "Household ownership of a car",
+  "sesindex_sum", "Socioeconomic status index score",
+  "sesindex_cat", "Socioeconomic status category",
+  
+  # DISCHARGE / FOLLOW-UP
+  "dischstatus_dis_new", "Discharge status",
+  "healthstatus_fol_new", "Health status at follow-up",
+  "deathcause_pda", "What was the cause of death?",
+  "deathcause_pda_new", "Standardized primary cause of death",
+  "pddcaresought_fol_new", "Post-discharge care sought",
+  
+  # DISCHARGE AGAINST MEDICAL ADVICE
+  "damareason_new_1", "Financial constraints",
+  "damareason_new_2", "Drug stock-outs",
+  "damareason_new_3", "Cultural beliefs",
+  "damareason_new_4", "The caregiver presumes the child is well",
+  "damareason_new_5", "General hospital environment",
+  "damareason_new_6", "Few/No health workers to provide care to their children",
+  "damareason_new_7", "No hope for improvement",
+  "damareason_new_8", "Poor/non-respectful care",
+  "damareason_new_97", "Dont know",
+  "damareason_new_98", "Other"
+)
+
+# Save variable labels 
+derived_labels <- setNames(
+  derived_labels$Label,
+  derived_labels$Variable
+)
+
+# Restore labels using the helper function
+dat_clean <- apply_labels(
+   dat_clean,
+   derived_labels)
+
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # SAVE WORKSPACE             ########
@@ -1292,6 +1838,6 @@ to_keep <- c("dat_UG",
 
 rm(list = setdiff(ls(), to_keep))
 
-save.image(paste0("Workspace/Create_Cleaned_Data (", redcap_date, ").RData"))
+save.image(paste0("Workspace/Create_Cleaned_Data002 (", redcap_date, ").RData"))
 
 

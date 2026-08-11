@@ -22,7 +22,6 @@ if(!require(summarytools)){
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # Source the cleaned script and the minimal selection criteria
-# load("Workspace/Create_Cleaned_Data (2025-10-27).RData")
 load("Workspace/Create_Cleaned_Data (2026-05-06).RData")
 
 # Apply the selection criteria
@@ -67,7 +66,8 @@ exclude <- c("studyid_adm",
              "exclusionother_adm",
              "consenttype_adm",
              "username_fol",
-             "consentobtained_adm"
+             "consentobtained_adm",
+             "labapproval_adm"
 )
 
 # Variables to keep regardless
@@ -105,15 +105,18 @@ cat("Data dictionary saved to:", output_file, "\n")
 # )
 # cat("PDF data dictionary saved to:", output_file_pdf, "\n")
 
+
 # ~~~~~~~~~~~~~~~~~~~~~
 # SAVE WORKSPACE ######
 # ~~~~~~~~~~~~~~~~~~~~~
+to_keep <- c("dat_UG",
+             "dat_RT",
+             "dat_raw",
+             "dat_subset",
+             "dat_clean",
+             "redcap_date")
 
-to_keep <- c("dat_raw", "dat_subset", "dat_dict", "dat_clean", "redcap_date")
 rm(list = setdiff(ls(),to_keep))
 
-save.image("Cleaned Data/SDOC_Cleaned_Data.RData")
-
-# Also export the csv file
-write.csv("Cleaned Data/SDOC_Cleaned_Data.csv")
+save.image(paste0("Workspace/Create_Cleaned_Datav0.02 (", redcap_date, ").RData"))
 
