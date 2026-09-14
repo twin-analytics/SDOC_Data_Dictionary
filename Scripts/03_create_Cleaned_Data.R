@@ -18,6 +18,7 @@ library(here)      # Simplify relative file paths
 library(dplyr)     # Data manipulation (part of tidyverse)
 library(sjlabelled)# Label handling for survey data
 library(Hmisc)     # Label management, summary stats
+library(sjmisc)
 library(labelled)
 library(zscorer)   # WHO child growth z-scores
 library(lubridate)
@@ -41,16 +42,27 @@ library(dlookr)      # Data diagnosis and visualization
 # Rename the loaded data and remove the original 'data' object.
 # This is done to prevent potential overwriting when loading the next dataset.
 
-redcap_date <- "2026-07-22"
+redcap_date <- "2026-08-31"
+
+# dat_UG <- local({
+#   source("Scripts/01_Redcap_Labelsv0.02.R", local = TRUE)
+#  data
+# })
+# 
+# dat_RT <- local({
+#   source("Scripts/02_RedCap_Labelsv0.03.R", local = TRUE)
+#   data
+# })
 
 dat_UG <- local({
-  source("Scripts/01_Redcap_Labelsv0.02.R", local = TRUE)
- data
+  source("Scripts/Redcap_Data001.R", local = TRUE)
+  data
 })
 
 dat_RT <- local({
-  source("Scripts/02_RedCap_Labelsv0.03.R", local = TRUE)
-  data})
+  source("Scripts/Redcap_Data002.R", local = TRUE)
+  data
+})
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # HELPER FUNCTIONS          #########
@@ -92,37 +104,41 @@ setdiff(colnames(dat_RT)[!grepl("\\.factor$", colnames(dat_RT))], colnames(dat_U
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # Extract labels from both datasets
+# labels_UG <- var_label(dat_UG)
+# labels_RT <- var_label(dat_RT)
+# 
+# # Temporarily remove labels (to avoid bind_rows() errors)
+# dat_UG <- remove_labels(dat_UG)
+# dat_RT <- remove_labels(dat_RT)
+# 
+# # Combine datasets
+# dat_raw <- bind_rows(
+#   dat_UG, dat_RT
+# )
+
+# Extract labels
 labels_UG <- var_label(dat_UG)
 labels_RT <- var_label(dat_RT)
 
-# Combine datasets
-dat_raw <- bind_rows(
-  dat_UG, dat_RT
+# Completely strip the <labelled> class using zap_labels()
+dat_UG <- zap_labels(dat_UG)
+dat_RT <- zap_labels(dat_RT)
+
+# Combine safely (this will succeed because they are now standard R vectors)
+dat_raw <- bind_rows(dat_UG, dat_RT)
+
+# Re-assign the labels to the combined dataset
+# (Prioritizes labels from dat_RT, fills in remaining from dat_UG)
+
+# Check labels before reapply labels
+common_labels <- intersect(
+  names(labels_UG),
+  names(labels_RT)
 )
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-## Combine variable labels
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# var_labels <- labelled::var_label(dat_raw)
+all_labels <- modifyList(labels_UG, labels_RT)
 
-all_labels <- labels_RT
-
-all_labels[names(labels_UG)] <- labels_UG
-
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-## Remove labels
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# dat_raw <- bind_rows(
-#   remove_all_labels(dat_UG),
-#   remove_all_labels(dat_RT)
-# )
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-## Restore labels
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
+# Restore labels
 labelled::var_label(dat_raw) <- all_labels
 
 
@@ -151,14 +167,18 @@ dat_raw <- dat_raw %>%
   select(-all_of(factor_vars))
 
 # Add the labels back
-label(dat_raw) <- as.list(label_vars)
+labelled::var_label(dat_raw) <- as.list(label_vars)
 
 # Clean the data
 dat_clean <- dat_raw %>% 
   clean_names()
 
+# Basic check
+labelled::var_label(dat_clean$infection_adm)
+labelled::var_label(dat_clean$studygroup_adm)
+
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-## Remove Consent and QOL (FSS/PedsQL) Sections ####
+## Remove Consent and (FSS/PedsQL) Sections ####
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # Identify which row each form starts/ends
@@ -207,6 +227,8 @@ dat_clean <- dat_clean %>%
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~
 ## Preserve Data Labels ####
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~
+labelled::var_label(dat_clean$infection_adm)
+labelled::var_label(dat_clean$site_adm)
 
 # Subsequent data manipulations may remove labels since tidyverse
 #  functions are not compatible with labels and will get overwritten
@@ -412,6 +434,7 @@ autopsy_rows <- dat_clean %>%
 #   group_by(studyid_adm) %>%
 #   fill(-all_of(followup_cols), .direction = "up") %>%
 #   ungroup()
+
 system.time({
   followup_cols <- grep("_fol", colnames(dat_clean), value = TRUE)
   fill_vars <- colnames(dat_clean)[!(colnames(dat_clean) %in% followup_cols)]
@@ -434,24 +457,80 @@ system.time({
   
 })
 
-# Then apply the filter
-dat_clean <- dat_clean %>% 
-  filter(redcap_event_name != "Autopsy")
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# HANDLE REDCAP LONGITUDINAL EVENTS
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+# REDCap contains multiple events per participant:
+#
+#   - hospitalization and discharge
+#   - 2 month discharge
+#   - 4 month discharge
+#   - 6 month discharge
+#   - 12 month discharge
+#   - Autopsy
+#
+# IMPORTANT:
+#  Retain only the final REDCap event. 
+#  Remove participants with autopsy rows and 
+#  for children recorded at 12 months.
+#
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# ONLY FINAL VISIT         ####
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+dat_before <- dat_clean
 
-# Quick checks
-dat_subset <- dat_clean %>%
-  arrange(redcap_event_name) %>% 
-  group_by(studyid_adm) %>% 
-  slice_tail(n=1) %>% 
+# Apply the filter
+dat_after <- subset(
+  dat_clean, 
+  redcap_event_name != "Autopsy" &
+    redcap_event_name != "12 month discharge"
+  )
+
+# Verify
+table(dat_after$redcap_event_name)
+table(dat_before$redcap_event_name)
+
+dat_after |> 
+  filter(studyid_adm == "0002-1A-AA-014") |> 
+  select(
+    studyid_adm,
+    redcap_event_name,
+    admitdate_adm,
+    dischdate_dis,
+    followdate_fol,
+    healthstatus_fol
+  )
+
+dat_before |> 
+  filter(studyid_adm == "0002-1A-AA-014") |> 
+  select(
+    studyid_adm,
+    redcap_event_name,
+    admitdate_adm,
+    dischdate_dis,
+    followdate_fol,
+    healthstatus_fol
+  )
+
+dat_after |> 
+  filter(redcap_event_name == "12 month discharge") |> 
+  select(
+    studyid_adm,
+    redcap_event_name
+  )
+
+# Then use group by and slice_tail to get the final event for each participant.
+# dat_clean <- dat_clean[!duplicated(dat_clean$studyid_adm, fromLast = TRUE), ]
+
+dat_clean <- dat_after %>%
+  group_by(studyid_adm) %>%
+  slice_tail(n=1) %>%
   ungroup()
 
-dat_clean <- dat_subset
-
+subset(
+  dat_clean,
+  redcap_event_name == "12 month discharge",
+  select = c(studyid_adm, redcap_event_name)
+  )
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # CHILDREN DATA GLOBAL MANIPULATION                                         ####
@@ -597,16 +676,17 @@ dat_clean <- dat_clean %>%
   # ~~~~~~~~~~~~~~~~~
   # LACTATE   
   # ~~~~~~~~~~~~~~~~~
-  lactate_mmolpl_adm_new = factor(
-    case_when(
-      is.na(lactate_mmolpl_adm) ~ NA_character_,
-      lactate_mmolpl_adm < 2 ~ "Normal (<2)",
-      lactate_mmolpl_adm <= 5  ~ "Moderate (2-5)",
-      lactate_mmolpl_adm > 5 ~ "Severe (>5)"
-    ),
-    levels = c("Normal", "Moderate", "Severe")
-  ),
-  
+  # lactate_mmolpl_adm_new = factor(
+  #   case_when(
+  #     lactate_mmolpl_adm < 2 ~ "Normal (<2)",
+  #     lactate_mmolpl_adm <= 5  ~ "Moderate (2-5)",
+  #     lactate_mmolpl_adm > 5 ~ "Severe (>5)",
+  #     is.na(lactate_mmolpl_adm) ~ NA_character_,
+  #     
+  #   ),
+  #   levels = c("Normal", "Moderate", "Severe")
+  # ),
+  # 
     # ~~~~~~~~~~~~~~~~~
     # SPO2 ADMISSION
     # ~~~~~~~~~~~~~~~~~
@@ -1540,136 +1620,204 @@ table(dat_clean$dehydrationturgor_adm, useNA = "ifany")
 
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# WHO IMCI DEHYDRATION CLASSIFICATION                     #####      
+# WHO  DEHYDRATION CLASSIFICATION                         #####      
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# DEHYDRATION DERIVATION NOTE:
+#
+# dehydration_adm is the initial screening question and is NOT
+# the WHO/IMCI dehydration classification.
+#
+# The four WHO dehydration assessment variables are only expected
+# when dehydration_adm = "Yes":
+#
+#   dehydrationappearance_adm
+#   dehydrationeyes_adm
+#   dehydrationthirst_adm
+#   dehydrationturgor_adm
+#
+# Individual signs were scored according to the REDCap response
+# categories. The WHO classification was then derived using
+# the number of qualifying dehydration signs.
+#
+# Participants answering "No" to the screening question were
+# classified as "No dehydration". Participants missing screening
+# information, were classified as "Not assessed".
+#
+# Missing assessment values were NOT treated as absence of a sign.
+# This is important because the assessment fields are conditionally
+# displayed in REDCap and therefore are structurally missing for
+# participants who answered "No" to the screening question.
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# DEHYDRATION CLASSIFICATION - WHO
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 dat_clean <- dat_clean |>
   mutate(
 
-    # Severe dehydration signs
-    severe_general =
-      dehydrationappearance_adm == "Lethargic or unconscious",
-    
-    severe_eye =
-      dehydrationeyes_adm == "Sunken",
-    
-    severe_thirst =
-      dehydrationthirst_adm == "Drinks poorly, or not able to drink",
-    
-    severe_turgor =
-      dehydrationturgor_adm == "Goes back very slowly",
-    
-    
-    # Some dehydration signs
-    some_general =
-      dehydrationappearance_adm %in%
-      c(
-        "Restless, irritable",
-        "Lethargic or unconscious"
-      ),
-    
-    some_eye =
-      dehydrationeyes_adm == "Sunken",
-    
-    some_thirst =
-      dehydrationthirst_adm %in%
-      c(
-        "Thirsty, drinks eagerly",
-        "Drinks poorly, or not able to drink"
-      ),
-    
-    some_turgor =
-      dehydrationturgor_adm %in%
-      c(
-        "Goes back slowly",
-        "Goes back very slowly"
-      )
-    
-  ) |>
-  
-# Count dehydration signs
-rowwise() |>
-  mutate(
-    severe_dehydration_signs =
-      sum(
-        c(
-          severe_general,
-          severe_eye,
-          severe_thirst,
-          severe_turgor
-        ),
-        na.rm = TRUE
-      ),
-    
-    dehydration_signs =
-      sum(
-        c(
-          some_general,
-          some_eye,
-          some_thirst,
-          some_turgor
-        ),
-        na.rm = TRUE
-      )
-    
-  ) |>
-  ungroup() |>
-  
-# Assessment status and IMCI classification
-mutate(
-  dehydration_assessed =
-    if_any(
-      c(
-        dehydrationappearance_adm,
-        dehydrationeyes_adm,
-        dehydrationthirst_adm,
-        dehydrationturgor_adm
-      ),
-      ~ !is.na(.)
+    # ----------------------------------------------------------
+    # 1. SCORE INDIVIDUAL DEHYDRATION SIGNS
+    # ----------------------------------------------------------
+
+    # General appearance
+    dehydration_general_score = case_when(
+      dehydration_adm == "Yes" &
+        dehydrationappearance_adm == "Lethargic or unconscious" ~ 2,
+
+      dehydration_adm == "Yes" &
+        dehydrationappearance_adm == "Restless, irritable" ~ 1,
+
+      dehydration_adm == "Yes" &
+        dehydrationappearance_adm == "Well, alert" ~ 0,
+
+      TRUE ~ NA_real_
     ),
-  
-  
-  dehydration_imci = case_when(
-    
-    !dehydration_assessed ~
-      "Not assessed",
-    
-    severe_dehydration_signs >= 2 ~
-      "Severe dehydration",
-    
-    dehydration_signs >= 2 ~
-      "Some dehydration",
-    
-    TRUE ~
-      "No dehydration"
-    
-  ),
-  
-  dehydration_imci =
-    factor(
-      dehydration_imci,
-      levels = c(
-        "Not assessed",
-        "No dehydration",
-        "Some dehydration",
-        "Severe dehydration"
+
+    # Sunken eyes
+    dehydration_eye_score = case_when(
+      dehydration_adm == "Yes" &
+        dehydrationeyes_adm == "Sunken" ~ 1,
+
+      dehydration_adm == "Yes" &
+        dehydrationeyes_adm == "Normal" ~ 0,
+
+      TRUE ~ NA_real_
+    ),
+
+    # Thirst
+    dehydration_thirst_score = case_when(
+      dehydration_adm == "Yes" &
+        dehydrationthirst_adm == "Drinks poorly, or not able to drink" ~ 2,
+
+      dehydration_adm == "Yes" &
+        dehydrationthirst_adm == "Thirsty, drinks eagerly" ~ 1,
+
+      dehydration_adm == "Yes" &
+        dehydrationthirst_adm == "Drinks normally, not thirsty" ~ 0,
+
+      TRUE ~ NA_real_
+    ),
+
+    # Skin turgor
+    dehydration_turgor_score = case_when(
+      dehydration_adm == "Yes" &
+        dehydrationturgor_adm == "Goes back very slowly" ~ 2,
+
+      dehydration_adm == "Yes" &
+        dehydrationturgor_adm == "Goes back slowly" ~ 1,
+
+      dehydration_adm == "Yes" &
+        dehydrationturgor_adm == "Goes back quickly" ~ 0,
+
+      TRUE ~ NA_real_
+    )
+  )
+
+dat_clean <- dat_clean |>
+  mutate(
+
+    # Number of severe dehydration signs
+    severe_dehydration_signs = rowSums(
+      cbind(
+        dehydration_general_score == 2,
+        dehydration_eye_score == 1,
+        dehydration_thirst_score == 2,
+        dehydration_turgor_score == 2
+      ),
+      na.rm = TRUE
+    ),
+
+    # Number of dehydration signs
+    dehydration_signs = rowSums(
+      cbind(
+        dehydration_general_score > 0,
+        dehydration_eye_score > 0,
+        dehydration_thirst_score > 0,
+        dehydration_turgor_score > 0
+      ),
+      na.rm = TRUE
+    ),
+
+    # Number of assessed signs
+    dehydration_signs_assessed = rowSums(
+      !is.na(
+        cbind(
+          dehydration_general_score,
+          dehydration_eye_score,
+          dehydration_thirst_score,
+          dehydration_turgor_score
+        )
       )
     )
-)
+  )
+
+dat_clean <- dat_clean |>
+  mutate(
+
+    dehydration_who = case_when(
+
+      # Screening question says NO
+      dehydration_adm == "No" ~
+        "No dehydration",
+
+      # Missing screening assessment
+        is.na(dehydration_adm) ~
+        "Not assessed",
+
+      # Screening says YES but assessment information
+      # is insufficient to classify
+      dehydration_adm == "Yes" &
+        dehydration_signs_assessed == 0 ~
+        "Not assessed",
+
+      # Severe dehydration
+      dehydration_adm == "Yes" &
+        severe_dehydration_signs >= 2 ~
+        "Severe dehydration",
+
+      # Some dehydration
+      dehydration_adm == "Yes" &
+        dehydration_signs >= 2 ~
+        "Some dehydration",
+
+      # Otherwise
+      dehydration_adm == "Yes" &
+        dehydration_signs_assessed > 0 ~
+        "No dehydration",
+
+      TRUE ~
+        "Not assessed"
+    )
+  )
+
+# Combine No dehydration and Not assessed
 
 
+# Verify
 table(
   dat_clean$dehydration_adm,
-  dat_clean$dehydration_imci,
+  useNA = "ifany"
+) 
+
+with(
+  dat_clean, 
+  table(
+  dehydration_adm,
+  dehydration_who
+  )
+)
+ 
+table(
+ dat_clean$dehydration_who,
   useNA = "ifany"
 )
 
-dat_clean |>
-  filter(
-    dehydration_adm == "No",
-    dehydration_imci == "Not assessed"
-  ) |>
-  count()
+dat_clean %>%
+  count(
+    dehydration_adm,
+    dehydration_who,
+    .drop = FALSE
+  )
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # REAPPLY VARIABLE LABELS BACK                            #####
@@ -1832,7 +1980,6 @@ dat_clean <- apply_labels(
 to_keep <- c("dat_UG",
              "dat_RT",
              "dat_raw",
-             "dat_subset",
              "dat_clean",
              "redcap_date")
 
